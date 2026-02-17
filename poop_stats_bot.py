@@ -5,6 +5,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from db import (
     create_tables,
     register_user,
@@ -25,9 +26,33 @@ TIMEOUT = 30
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Глобальный словарь для хранения состояний ожидания ответа
+# Глобальный словарь для хранения состояний ожидания ответа и ввода времени
 pending_lock = threading.Lock()
-pending = {}  # {user_id: {'type': 'breakfast', 'date': '2025-03-28'}}
+pending = {}          # {user_id: {'type': 'breakfast', 'date': '2025-03-28'}}
+awaiting_time = {}    # {user_id: 'breakfast'} – ждём ввод времени для типа
+
+
+# ------------------- Клавиатуры -------------------
+def main_menu():
+    """Главное меню."""
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🍳 Завтрак", callback_data="set_breakfast"),
+        InlineKeyboardButton("🍲 Обед", callback_data="set_lunch"),
+        InlineKeyboardButton("🍽️ Ужин", callback_data="set_dinner"),
+        InlineKeyboardButton("🚽 Туалет", callback_data="set_toilet"),
+        InlineKeyboardButton("⏰ Мои настройки", callback_data="show_settings"),
+        InlineKeyboardButton("📊 Бристольская шкала", callback_data="bristol"),
+        InlineKeyboardButton("❓ Помощь", callback_data="help")
+    )
+    return markup
+
+
+def back_button():
+    """Кнопка возврата в главное меню."""
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("◀ Назад", callback_data="back_to_main"))
+    return markup
 
 
 # ------------------- Отправка вопросов -------------------
@@ -104,34 +129,49 @@ def cmd_start(message):
     bot.send_message(user_id,
                      "👋 Привет! Я помогу отслеживать связь между питанием и стулом.\n"
                      "Я буду присылать вопросы в установленное время.\n"
-                     "Используй /help для списка команд.")
+                     "Используй кнопки ниже для настройки.",
+                     reply_markup=main_menu())
+
+
+@bot.message_handler(commands=['menu'])
+def cmd_menu(message):
+    """Показать главное меню."""
+    bot.send_message(message.from_user.id, "Главное меню:",
+                     reply_markup=main_menu())
 
 
 @bot.message_handler(commands=['help'])
 def cmd_help(message):
+    """Помощь."""
     text = (
         "📋 <b>Доступные команды:</b>\n"
-        "/set_breakfast HH:MM — время завтрака\n"
-        "/set_lunch HH:MM — время обеда\n"
-        "/set_dinner HH:MM — время ужина\n"
-        "/set_toilet HH:MM — время опроса о стуле\n"
-        "/bristol — показать Бристольскую шкалу стула\n"
-        "/show_settings — текущие настройки\n"
-        "/cancel — отменить ожидаемый вопрос\n"
-        "/help — это сообщение"
+        "/menu — показать главное меню\n"
+        "/cancel — отменить ожидаемый вопрос или ввод времени\n"
+        "Также вы можете использовать кнопки в меню для настройки."
     )
-    bot.send_message(message.from_user.id, text, parse_mode="HTML")
+    bot.send_message(message.from_user.id, text,
+                     parse_mode="HTML", reply_markup=back_button())
 
 
-@bot.message_handler(commands=['bristol'])
-def cmd_bristol(message):
-    scale = get_bristol_scale()
-    text = "📊 <b>Бристольская шкала формы кала:</b>\n"
-    for id, desc in scale:
-        text += f"{id} — {desc}\n"
-    bot.send_message(message.from_user.id, text, parse_mode="HTML")
+@bot.message_handler(commands=['cancel'])
+def cmd_cancel(message):
+    user_id = message.from_user.id
+    with pending_lock:
+        cleared = False
+        if user_id in pending:
+            del pending[user_id]
+            cleared = True
+        if user_id in awaiting_time:
+            del awaiting_time[user_id]
+            cleared = True
+    if cleared:
+        bot.reply_to(message, "✅ Ожидание отменено.", reply_markup=main_menu())
+    else:
+        bot.reply_to(message, "❌ Нет активного ожидания.",
+                     reply_markup=main_menu())
 
 
+# Старые команды установки времени оставляем для обратной совместимости
 @bot.message_handler(commands=['set_breakfast', 'set_lunch', 'set_dinner', 'set_toilet'])
 def cmd_set_time(message):
     user_id = message.from_user.id
@@ -139,76 +179,136 @@ def cmd_set_time(message):
     meal_type = command.split('_')[1]  # breakfast, lunch, dinner, toilet
     args = message.text.split()
     if len(args) != 2:
-        bot.reply_to(message, "❌ Использование: /set_breakfast 08:00")
+        # Показываем подсказку именно для этой команды
+        bot.reply_to(message, f"❌ Использование: {command} HH:MM")
         return
     time_str = args[1]
     if update_user_time(user_id, meal_type, time_str):
         bot.reply_to(
-            message, f"✅ Время для <b>{meal_type}</b> установлено на <b>{time_str}</b>", parse_mode="HTML")
+            message, f"✅ Время для <b>{meal_type}</b> установлено на <b>{time_str}</b>",
+            parse_mode="HTML", reply_markup=main_menu())
     else:
         bot.reply_to(
             message, "❌ Неверный формат времени. Используй HH:MM (например, 08:00).")
 
 
-@bot.message_handler(commands=['show_settings'])
-def cmd_show_settings(message):
-    user_id = message.from_user.id
-    times = get_user_times(user_id)
-    if times:
-        bt, lt, dt, tt = times
-        text = (
-            f"⏰ <b>Твои настройки:</b>\n"
-            f"Завтрак: {bt}\n"
-            f"Обед:   {lt}\n"
-            f"Ужин:   {dt}\n"
-            f"Туалет: {tt}"
-        )
-        bot.send_message(user_id, text, parse_mode="HTML")
-    else:
-        bot.send_message(user_id, "❌ Ты не зарегистрирован. Напиши /start")
+# ------------------- Обработчики колбэков -------------------
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = call.from_user.id
+    data = call.data
 
+    if data == "back_to_main":
+        bot.edit_message_text("Главное меню:", user_id, call.message.message_id,
+                              reply_markup=main_menu())
+        return
 
-@bot.message_handler(commands=['cancel'])
-def cmd_cancel(message):
-    user_id = message.from_user.id
-    with pending_lock:
-        if user_id in pending:
-            del pending[user_id]
-            bot.reply_to(message, "✅ Ожидание отменено.")
+    if data == "show_settings":
+        times = get_user_times(user_id)
+        if times:
+            bt, lt, dt, tt = times
+            text = (
+                f"⏰ <b>Твои настройки:</b>\n"
+                f"Завтрак: {bt}\n"
+                f"Обед:   {lt}\n"
+                f"Ужин:   {dt}\n"
+                f"Туалет: {tt}"
+            )
         else:
-            bot.reply_to(message, "❌ Нет активного ожидания.")
+            text = "❌ Ты не зарегистрирован. Напиши /start"
+        bot.edit_message_text(text, user_id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=back_button())
+        return
+
+    if data == "bristol":
+        scale = get_bristol_scale()
+        text = "📊 <b>Бристольская шкала формы кала:</b>\n"
+        for id, desc in scale:
+            text += f"{id} — {desc}\n"
+        bot.edit_message_text(text, user_id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=back_button())
+        return
+
+    if data == "help":
+        text = (
+            "📋 <b>Доступные команды:</b>\n"
+            "/menu — показать главное меню\n"
+            "/cancel — отменить ожидаемый вопрос или ввод времени\n"
+            "Также вы можете использовать кнопки в меню для настройки."
+        )
+        bot.edit_message_text(text, user_id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=back_button())
+        return
+
+    if data in ("set_breakfast", "set_lunch", "set_dinner", "set_toilet"):
+        meal_type = data.replace("set_", "")
+        # Запрашиваем время
+        msg = bot.send_message(user_id,
+                               f"Введите время для <b>{meal_type}</b> в формате HH:MM (например, 08:00):",
+                               parse_mode="HTML")
+        # Устанавливаем состояние ожидания ввода времени
+        with pending_lock:
+            awaiting_time[user_id] = meal_type
+        # Редактируем исходное сообщение, чтобы убрать кнопки (необязательно)
+        bot.edit_message_reply_markup(
+            user_id, call.message.message_id, reply_markup=None)
+        return
 
 
-# ------------------- Обработчик текстовых сообщений (ответы на вопросы) -------------------
+# ------------------- Обработчик текстовых сообщений -------------------
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     user_id = message.from_user.id
     text = message.text.strip()
 
+    # Сначала проверяем, не ждём ли мы ввод времени
     with pending_lock:
+        if user_id in awaiting_time:
+            meal_type = awaiting_time.pop(user_id)
+            # Проверяем формат
+            try:
+                datetime.strptime(text, "%H:%M")
+            except ValueError:
+                bot.reply_to(message,
+                             "❌ Неверный формат. Введите время в формате HH:MM (например, 08:00).",
+                             reply_markup=main_menu())
+                return
+            # Сохраняем
+            if update_user_time(user_id, meal_type, text):
+                bot.reply_to(message,
+                             f"✅ Время для <b>{meal_type}</b> установлено на <b>{text}</b>.",
+                             parse_mode="HTML", reply_markup=main_menu())
+            else:
+                # Эта ситуация маловероятна, т.к. мы уже проверили формат
+                bot.reply_to(message, "❌ Ошибка при сохранении.",
+                             reply_markup=main_menu())
+            return
+
+        # Если не ждём время, проверяем ожидание ответа на вопрос
         if user_id not in pending:
             bot.reply_to(
-                message, "Я не ожидаю ответа. Используй /help для списка команд.")
+                message, "Я не ожидаю ответа. Используй /menu для навигации.")
             return
 
         p = pending[user_id]
         p_type = p['type']
-        p_date = p['date']  # дата, к которой относится запись
+        p_date = p['date']
 
         if p_type in ('breakfast', 'lunch', 'dinner'):
             save_meal(user_id, p_type, text, p_date)
-            bot.reply_to(
-                message, f"✅ Информация о <b>{p_type}</b> сохранена.", parse_mode="HTML")
+            bot.reply_to(message, f"✅ Информация о <b>{p_type}</b> сохранена.",
+                         parse_mode="HTML", reply_markup=main_menu())
             del pending[user_id]
 
         elif p_type == 'toilet':
             if not text.isdigit() or not (0 <= int(text) <= 7):
-                bot.reply_to(
-                    message, "❌ Пожалуйста, введи <b>число от 0 до 7</b>.", parse_mode="HTML")
+                bot.reply_to(message, "❌ Пожалуйста, введи <b>число от 0 до 7</b>.",
+                             parse_mode="HTML")
                 return
             quality = int(text)
             save_stool(user_id, quality, p_date)
-            bot.reply_to(message, "✅ Оценка стула сохранена.")
+            bot.reply_to(message, "✅ Оценка стула сохранена.",
+                         reply_markup=main_menu())
             del pending[user_id]
 
 

@@ -171,25 +171,49 @@ def cmd_cancel(message):
                      reply_markup=main_menu())
 
 
-# Старые команды установки времени оставляем для обратной совместимости
+# Обработчики команд установки времени (для обратной совместимости)
 @bot.message_handler(commands=['set_breakfast', 'set_lunch', 'set_dinner', 'set_toilet'])
 def cmd_set_time(message):
     user_id = message.from_user.id
     command = message.text.split()[0]
     meal_type = command.split('_')[1]  # breakfast, lunch, dinner, toilet
+
+    # Определяем русское название и пример для подсказки
+    if meal_type == "breakfast":
+        meal_name = "завтрака"
+        example = "08:00"
+    elif meal_type == "lunch":
+        meal_name = "обеда"
+        example = "13:00"
+    elif meal_type == "dinner":
+        meal_name = "ужина"
+        example = "19:00"
+    elif meal_type == "toilet":
+        meal_name = "туалета"
+        example = "09:00"
+    else:
+        meal_name = meal_type
+        example = "08:00"
+
     args = message.text.split()
     if len(args) != 2:
-        # Показываем подсказку именно для этой команды
-        bot.reply_to(message, f"❌ Использование: {command} HH:MM")
+        bot.reply_to(
+            message, f"❌ Использование: {command} ЧЧ:ММ (например, {example})")
         return
+
     time_str = args[1]
     if update_user_time(user_id, meal_type, time_str):
         bot.reply_to(
-            message, f"✅ Время для <b>{meal_type}</b> установлено на <b>{time_str}</b>",
-            parse_mode="HTML", reply_markup=main_menu())
+            message,
+            f"✅ Время <b>{meal_name}</b> установлено на <b>{time_str}</b>",
+            parse_mode="HTML",
+            reply_markup=main_menu()
+        )
     else:
         bot.reply_to(
-            message, "❌ Неверный формат времени. Используй HH:MM (например, 08:00).")
+            message,
+            "❌ Неверный формат времени. Используй ЧЧ:ММ (например, 08:00)."
+        )
 
 
 # ------------------- Обработчики колбэков -------------------
@@ -242,14 +266,31 @@ def callback_handler(call):
 
     if data in ("set_breakfast", "set_lunch", "set_dinner", "set_toilet"):
         meal_type = data.replace("set_", "")
-        # Запрашиваем время
-        msg = bot.send_message(user_id,
-                               f"Введите время для <b>{meal_type}</b> в формате HH:MM (например, 08:00):",
-                               parse_mode="HTML")
-        # Устанавливаем состояние ожидания ввода времени
+        # Определяем русское название и пример времени
+        if meal_type == "breakfast":
+            meal_name = "завтрака"
+            example = "08:00"
+        elif meal_type == "lunch":
+            meal_name = "обеда"
+            example = "13:00"
+        elif meal_type == "dinner":
+            meal_name = "ужина"
+            example = "19:00"
+        elif meal_type == "toilet":
+            meal_name = "туалета"
+            example = "09:00"
+        else:
+            meal_name = meal_type
+            example = "08:00"
+
+        msg = bot.send_message(
+            user_id,
+            f"Введите время <b>{meal_name}</b> в формате ЧЧ:ММ (например, {example}):",
+            parse_mode="HTML"
+        )
         with pending_lock:
             awaiting_time[user_id] = meal_type
-        # Редактируем исходное сообщение, чтобы убрать кнопки (необязательно)
+        # Редактируем исходное сообщение, чтобы убрать кнопки
         bot.edit_message_reply_markup(
             user_id, call.message.message_id, reply_markup=None)
         return
@@ -265,18 +306,31 @@ def handle_text(message):
     with pending_lock:
         if user_id in awaiting_time:
             meal_type = awaiting_time.pop(user_id)
+
+            # Определяем русское название для ответа
+            if meal_type == "breakfast":
+                meal_name = "завтрака"
+            elif meal_type == "lunch":
+                meal_name = "обеда"
+            elif meal_type == "dinner":
+                meal_name = "ужина"
+            elif meal_type == "toilet":
+                meal_name = "туалета"
+            else:
+                meal_name = meal_type
+
             # Проверяем формат
             try:
                 datetime.strptime(text, "%H:%M")
             except ValueError:
                 bot.reply_to(message,
-                             "❌ Неверный формат. Введите время в формате HH:MM (например, 08:00).",
+                             "❌ Неверный формат. Введите время в формате ЧЧ:ММ (например, 08:00).",
                              reply_markup=main_menu())
                 return
             # Сохраняем
             if update_user_time(user_id, meal_type, text):
                 bot.reply_to(message,
-                             f"✅ Время для <b>{meal_type}</b> установлено на <b>{text}</b>.",
+                             f"✅ Время <b>{meal_name}</b> установлено на <b>{text}</b>.",
                              parse_mode="HTML", reply_markup=main_menu())
             else:
                 # Эта ситуация маловероятна, т.к. мы уже проверили формат

@@ -79,13 +79,13 @@ def send_dinner_question(user_id):
 
 def send_toilet_question(user_id):
     bot.send_message(user_id,
-                     "🚽 Оцените качество стула за <b>вчерашний день</b> по Бристольской шкале (0–7):\n"
+                     "🚽 Оцените качество стула  по Бристольской шкале (0–7):\n"
                      "0 — отсутствие дефекации\n"
                      "1–7 — типы стула (введите /bristol для подробностей)\n"
                      "Пожалуйста, введите число от 0 до 7.",
                      parse_mode="HTML")
     with pending_lock:
-        # Сохраняем дату ответа (сегодня) — стул привяжется к meals за вчера при анализе
+        # Сохраняем дату ответа (сегодня)
         pending[user_id] = {'type': 'toilet',
                             'date': datetime.now().strftime("%Y-%m-%d")}
 
@@ -102,19 +102,23 @@ def scheduler():
             user_id = user[0]
             bt, lt, dt, tt = user[1], user[2], user[3], user[4]
 
-            if bt == current_time and not is_notification_sent(user_id, 'breakfast', current_date):
+            if (bt == current_time and
+                    not is_notification_sent(user_id, 'breakfast', current_date)):
                 send_breakfast_question(user_id)
                 mark_notification_sent(user_id, 'breakfast', current_date)
 
-            if lt == current_time and not is_notification_sent(user_id, 'lunch', current_date):
+            if (lt == current_time and
+                    not is_notification_sent(user_id, 'lunch', current_date)):
                 send_lunch_question(user_id)
                 mark_notification_sent(user_id, 'lunch', current_date)
 
-            if dt == current_time and not is_notification_sent(user_id, 'dinner', current_date):
+            if (dt == current_time and
+                    not is_notification_sent(user_id, 'dinner', current_date)):
                 send_dinner_question(user_id)
                 mark_notification_sent(user_id, 'dinner', current_date)
 
-            if tt == current_time and not is_notification_sent(user_id, 'toilet', current_date):
+            if (tt == current_time and
+                    not is_notification_sent(user_id, 'toilet', current_date)):
                 send_toilet_question(user_id)
                 mark_notification_sent(user_id, 'toilet', current_date)
 
@@ -302,6 +306,12 @@ def handle_text(message):
     user_id = message.from_user.id
     text = message.text.strip()
 
+    meal_names = {
+        'breakfast': 'завтраке',
+        'lunch': 'обеде',
+        'dinner': 'ужине'
+    }
+
     # Сначала проверяем, не ждём ли мы ввод времени
     with pending_lock:
         if user_id in awaiting_time:
@@ -350,7 +360,7 @@ def handle_text(message):
 
         if p_type in ('breakfast', 'lunch', 'dinner'):
             save_meal(user_id, p_type, text, p_date)
-            bot.reply_to(message, f"✅ Информация о <b>{p_type}</b> сохранена.",
+            bot.reply_to(message, f"✅ Информация о <b>{meal_names[p_type]}</b> сохранена.",
                          parse_mode="HTML", reply_markup=main_menu())
             del pending[user_id]
 
@@ -377,4 +387,4 @@ if __name__ == '__main__':
 
     # Запускаем бота
     print("Бот запущен...")
-    bot.polling(none_stop=True)
+    bot.polling(none_stop=True, interval=0, timeout=30, long_polling_timeout=30)

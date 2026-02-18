@@ -83,7 +83,9 @@ def create_tables():
             (7, "Водянистый, без твёрдых кусочков (полностью жидкий)")
         ]
         cur.executemany(
-            "INSERT INTO bristol_scale (id, description) VALUES (?, ?)", bristol_data)
+            "INSERT INTO bristol_scale (id, description) VALUES (?, ?)",
+            bristol_data
+        )
 
     conn.commit()
     conn.close()
@@ -121,7 +123,9 @@ def update_user_time(user_id, meal_type, time_str):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute(
-        f'UPDATE users SET {meal_type}_time = ? WHERE user_id = ?', (time_str, user_id))
+        f'UPDATE users SET {meal_type}_time = ? WHERE user_id = ?',
+        (time_str, user_id)
+    )
     conn.commit()
     conn.close()
     return True
@@ -176,10 +180,14 @@ def save_meal(user_id, meal_type, text, date_str):
     row = cur.fetchone()
     if row:
         cur.execute(
-            f'UPDATE meals SET {meal_type}=? WHERE user_id=? AND date=?', (text, user_id, date_str))
+            f'UPDATE meals SET {meal_type}=? WHERE user_id=? AND date=?',
+            (text, user_id, date_str)
+        )
     else:
         cur.execute(
-            f'INSERT INTO meals (user_id, date, {meal_type}) VALUES (?, ?, ?)', (user_id, date_str, text))
+            f'INSERT INTO meals (user_id, date, {meal_type}) VALUES (?, ?, ?)',
+            (user_id, date_str, text)
+        )
     conn.commit()
     conn.close()
 

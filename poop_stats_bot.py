@@ -72,15 +72,15 @@ def main_menu():
         InlineKeyboardButton('🚽 Туалет', callback_data='set_toilet'),
         InlineKeyboardButton('⏰ Расписание', callback_data='show_timetable'),
         InlineKeyboardButton('📊 Бристоль', callback_data='bristol'),
-        InlineKeyboardButton('➕ Ручной ввод', callback_data='manual_menu'),
-        InlineKeyboardButton('📋 За сегодня', callback_data='show_today'),
+        InlineKeyboardButton('➕ Добавить событие', callback_data='manual_menu'),
+        InlineKeyboardButton('📋 Дневная статистика', callback_data='show_today'),
         InlineKeyboardButton('❓ Помощь', callback_data='help')
     )
     return markup
 
 
 def manual_menu_keyboard():
-    """Меню ручного ввода."""
+    """Меню ручного ввода события."""
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton('🍳 Завтрак', callback_data='manual_breakfast'),
@@ -351,7 +351,7 @@ def callback_handler(call):
     # Меню ручного ввода
     if data == 'manual_menu':
         bot.edit_message_text(
-            '➕ Ручной ввод: выберите тип записи',
+            '➕ Добавить событие: выберите тип записи',
             user_id,
             call.message.message_id,
             reply_markup=manual_menu_keyboard()

@@ -38,6 +38,7 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TIMEOUT = 30
+DATE_FORMAT = '%d.%m.%Y'
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -66,15 +67,26 @@ def main_menu():
     """Главное меню."""
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
+        InlineKeyboardButton('⏰ Расписание', callback_data='show_timetable'),
+        InlineKeyboardButton('📊 Бристольская шкала', callback_data='bristol'),
+        InlineKeyboardButton('➕ Добавить событие',
+                             callback_data='manual_menu'),
+        InlineKeyboardButton('📋 Дневная статистика',
+                             callback_data='show_today'),
+        InlineKeyboardButton('❓ Помощь', callback_data='help')
+    )
+    return markup
+
+
+def edit_timetable_menu():
+    """Изменение расписания."""
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
         InlineKeyboardButton('🍳 Завтрак', callback_data='set_breakfast'),
         InlineKeyboardButton('🍲 Обед', callback_data='set_lunch'),
         InlineKeyboardButton('🍽️ Ужин', callback_data='set_dinner'),
         InlineKeyboardButton('🚽 Туалет', callback_data='set_toilet'),
-        InlineKeyboardButton('⏰ Расписание', callback_data='show_timetable'),
-        InlineKeyboardButton('📊 Бристоль', callback_data='bristol'),
-        InlineKeyboardButton('➕ Добавить событие', callback_data='manual_menu'),
-        InlineKeyboardButton('📋 Дневная статистика', callback_data='show_today'),
-        InlineKeyboardButton('❓ Помощь', callback_data='help')
+        InlineKeyboardButton('◀ Назад', callback_data='back_to_main')
     )
     return markup
 
@@ -128,7 +140,7 @@ def send_breakfast_question(user_id):
     with pending_lock:
         pending[user_id] = {
             'type': 'breakfast',
-            'date': datetime.now().strftime('%Y-%m-%d')
+            'date': datetime.now().strftime(DATE_FORMAT)
         }
 
 
@@ -141,7 +153,7 @@ def send_lunch_question(user_id):
     with pending_lock:
         pending[user_id] = {
             'type': 'lunch',
-            'date': datetime.now().strftime('%Y-%m-%d')
+            'date': datetime.now().strftime(DATE_FORMAT)
         }
 
 
@@ -154,24 +166,28 @@ def send_dinner_question(user_id):
     with pending_lock:
         pending[user_id] = {
             'type': 'dinner',
-            'date': datetime.now().strftime('%Y-%m-%d')
+            'date': datetime.now().strftime(DATE_FORMAT)
         }
 
 
 def send_toilet_question(user_id):
+    scale = get_bristol_scale()
+    text = '🚽 Оцените качество стула по Бристольской шкале:\n\n'
+    for id_, desc in scale:
+        text += f'{id_} — {desc}\n'
+    text += '\nВведите цифру от 0 до 7:'
+
     bot.send_message(
         user_id,
-        '🚽 Оцените качество стула по Бристольской шкале (0–7):\n'
-        '0 — отсутствие дефекации\n'
-        '1–7 — типы стула\n'
-        'Введите число от 0 до 7.',
+        text,
         parse_mode='HTML',
         reply_markup=back_button()
     )
+
     with pending_lock:
         pending[user_id] = {
             'type': 'toilet',
-            'date': datetime.now().strftime('%Y-%m-%d')
+            'date': datetime.now().strftime(DATE_FORMAT)
         }
 
 
@@ -181,7 +197,7 @@ def scheduler():
     while True:
         now = datetime.now()
         current_time = now.strftime('%H:%M')
-        current_date = now.strftime('%Y-%m-%d')
+        current_date = now.strftime(DATE_FORMAT)
 
         for user in get_all_users():
             user_id = user[0]
@@ -298,13 +314,15 @@ def callback_handler(call):
     if data == 'show_timetable':
         times = get_user_times(user_id)
         if times:
-            bt, lt, dt, tt = times
+            breakfast_time, lunch_time, dinner_time, toilet_time = times
             text = (
                 f'⏰ <b>Твоё расписание:</b>\n'
-                f'Завтрак: {bt}\n'
-                f'Обед:    {lt}\n'
-                f'Ужин:    {dt}\n'
-                f'Туалет:  {tt}'
+                f'Завтрак: {breakfast_time}\n'
+                f'Обед:    {lunch_time}\n'
+                f'Ужин:    {dinner_time}\n'
+                f'Туалет:  {toilet_time}\n'
+                f'\nЕсли хочешь изменить время,\n'
+                f'нажми соответствующую кнопку:'
             )
         else:
             text = '❌ Ты не зарегистрирован. Напиши /start'
@@ -313,7 +331,7 @@ def callback_handler(call):
             user_id,
             call.message.message_id,
             parse_mode='HTML',
-            reply_markup=back_button()
+            reply_markup=edit_timetable_menu()
         )
         return
 
@@ -430,7 +448,7 @@ def callback_handler(call):
 # ------------------- Функции для ручного ввода и просмотра -------------------
 def show_today_entries(user_id, message_id):
     """Показывает все записи за сегодня и даёт кнопки для редактирования."""
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = datetime.now().strftime(DATE_FORMAT)
     meals = get_meals_for_day(user_id, today)
     medicines = get_medicines_for_day(user_id, today)
     stools = get_stools_for_day(user_id, today)
@@ -445,25 +463,23 @@ def show_today_entries(user_id, message_id):
             text += '<b>🍽️ Приёмы пищи:</b>\n'
             for m in meals:
                 text += (
-                    f'• {m['meal_type']}: {m['description']}\n'
-                    f'(ред.: /edit_meal_{m['id']})\n'
+                    f'<b>{m['meal_type']}</b>: {m['description']}'
+                    f' (ред.: /edit_meal_{m['id']})\n'
                 )
         if medicines:
             text += '\n<b>💊 Лекарства:</b>\n'
             for med in medicines:
-                time_str = f' в {med['time']}' if med['time'] else ''
                 text += (
-                    f'• {med['name']} {med['dosage']}{time_str}\n'
-                    f'(ред.: /edit_med_{med['id']})\n'
+                    f'• {med['name']} {med['dosage']}'
+                    f' (ред.: /edit_med_{med['id']})\n'
                 )
         if stools:
             text += '\n<b>🚽 Стул:</b>\n'
             for s in stools:
-                time_str = f' в {s['time']}' if s['time'] else ''
                 description = bristol_scale.get(s['quality'], 'неизвестно')
                 text += (
-                    f'• {s['quality']} — {description}{time_str}\n'
-                    f'(ред.: /edit_stool_{s['id']})\n'
+                    f'• {s['quality']} — {description}'
+                    f' (ред.: /edit_stool_{s['id']})\n'
                 )
 
     # Кнопки для редактирования (через колбэки)
@@ -480,7 +496,7 @@ def show_today_entries(user_id, message_id):
 
 def handle_manual_start(user_id, message_id, action):
     """Начинает процесс ручного ввода для указанного действия."""
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = datetime.now().strftime(DATE_FORMAT)
     mt = load_meal_types()
 
     if action == 'breakfast':
@@ -504,7 +520,7 @@ def handle_manual_start(user_id, message_id, action):
 def start_manual_meal(user_id, message_id, meal_type_id):
     """Запуск ручного ввода еды: просим описание."""
     bot.edit_message_text(
-        '🍽️ Введите описание блюд (можно несколько строк):',
+        '🍽️ Введите описание блюд:',
         user_id,
         message_id
     )
@@ -513,7 +529,7 @@ def start_manual_meal(user_id, message_id, meal_type_id):
             'step': 'wait_description',
             'action': 'meal',
             'meal_type_id': meal_type_id,
-            'date': datetime.now().strftime('%Y-%m-%d')
+            'date': datetime.now().strftime(DATE_FORMAT)
         }
 
 
@@ -528,22 +544,29 @@ def start_manual_medicine(user_id, message_id):
         manual_input[user_id] = {
             'step': 'wait_name',
             'action': 'medicine',
-            'date': datetime.now().strftime('%Y-%m-%d')
+            'date': datetime.now().strftime(DATE_FORMAT)
         }
 
 
 def start_manual_stool(user_id, message_id):
     """Запуск ручного ввода стула: просим оценку."""
+    scale = get_bristol_scale()
+    text = '🚽 Оцените качество стула по Бристольской шкале:\n\n'
+    for id_, desc in scale:
+        text += f'{id_} — {desc}\n'
+    text += '\nВведите цифру от 0 до 7:'
+
     bot.edit_message_text(
-        '🚽 Введите оценку по Бристольской шкале (0–7):',
+        text,
         user_id,
         message_id
     )
+
     with pending_lock:
         manual_input[user_id] = {
             'step': 'wait_quality',
             'action': 'stool',
-            'date': datetime.now().strftime('%Y-%m-%d')
+            'date': datetime.now().strftime(DATE_FORMAT)
         }
 
 
@@ -686,21 +709,11 @@ def handle_text(message):
                 elif step == 'wait_dosage':
                     dosage = None if text == '-' else text
                     state['dosage'] = dosage
-                    state['step'] = 'wait_time'
-                    bot.reply_to(
-                        message,
-                        'Введите время приёма в формате ЧЧ:ММ '
-                        '(или пропустите, введя «-»):'
-                    )
-                    return
-                elif step == 'wait_time':
-                    time_val = None if text == '-' else text
                     save_medicine(
                         user_id,
                         state['name'],
                         state['dosage'],
-                        state['date'],
-                        time_val
+                        state['date']
                     )
                     del manual_input[user_id]
                     bot.reply_to(
@@ -715,25 +728,15 @@ def handle_text(message):
                 if not text.isdigit() or not (0 <= int(text) <= 7):
                     bot.reply_to(
                         message,
-                        '❌ Пожалуйста, введите число от 0 до 7.'
+                        '❌ Пожалуйста, введите цифру от 0 до 7.'
                     )
                     return
                 quality = int(text)
                 state['quality'] = quality
-                state['step'] = 'wait_stool_time'
-                bot.reply_to(
-                    message,
-                    'Введите время похода в формате ЧЧ:ММ '
-                    '(или пропустите, введя «-»):'
-                )
-                return
-            elif step == 'wait_stool_time' and state['action'] == 'stool':
-                time_val = None if text == '-' else text
                 save_stool(
                     user_id,
                     state['quality'],
-                    state['date'],
-                    time_val
+                    state['date']
                 )
                 del manual_input[user_id]
                 bot.reply_to(
@@ -761,19 +764,10 @@ def handle_text(message):
             if step == 'edit_med_dosage':
                 dosage = None if text == '-' else text
                 state['dosage'] = dosage
-                state['step'] = 'edit_med_time'
-                bot.reply_to(
-                    message,
-                    'Введите новое время (ЧЧ:ММ) или «-» для пропуска:'
-                )
-                return
-            if step == 'edit_med_time':
-                time_val = None if text == '-' else text
                 update_medicine(
                     state['item_id'],
                     state['new_name'],
-                    state['dosage'],
-                    time_val
+                    state['dosage']
                 )
                 del manual_input[user_id]
                 bot.reply_to(
@@ -790,18 +784,9 @@ def handle_text(message):
                     )
                     return
                 state['new_quality'] = int(text)
-                state['step'] = 'edit_stool_time'
-                bot.reply_to(
-                    message,
-                    'Введите новое время (ЧЧ:ММ) или «-» для пропуска:'
-                )
-                return
-            if step == 'edit_stool_time':
-                time_val = None if text == '-' else text
                 update_stool(
                     state['item_id'],
-                    state['new_quality'],
-                    time_val
+                    state['new_quality']
                 )
                 del manual_input[user_id]
                 bot.reply_to(
@@ -854,7 +839,7 @@ def handle_text(message):
                 )
                 return
             quality = int(text)
-            save_stool(user_id, quality, p_date, None)  # без времени
+            save_stool(user_id, quality, p_date)
             bot.reply_to(
                 message,
                 '✅ Оценка стула сохранена.',

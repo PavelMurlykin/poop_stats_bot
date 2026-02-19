@@ -60,8 +60,7 @@ def create_tables(cur):
             description TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (meal_type_id) REFERENCES meal_types(id),
-            UNIQUE(user_id, date, meal_type_id)
+            FOREIGN KEY (meal_type_id) REFERENCES meal_types(id)
         )
     ''')
 
@@ -73,19 +72,17 @@ def create_tables(cur):
             name TEXT NOT NULL,
             dosage TEXT,
             date TEXT NOT NULL,
-            time TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    # Стул (несколько записей в день)
+    # Стул
     cur.execute('''
         CREATE TABLE IF NOT EXISTS stools (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             date TEXT NOT NULL,
-            time TEXT,
             quality INTEGER NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -111,22 +108,23 @@ def create_tables(cur):
             description TEXT
         )
     ''')
-    cur.execute('SELECT COUNT(*) FROM bristol_scale')
-    if cur.fetchone()[0] == 0:
-        bristol_data = [
-            (0, 'Отсутствие дефекации'),
-            (1, 'Отдельные твёрдые комки, как орехи, трудно проходят [серьезный запор]'),
-            (2, 'Колбасовидный, но комковатый [запор или склонность к запору]'),
-            (3, 'Колбасовидный с трещинами на поверхности [норма]'),
-            (4, 'Колбасовидный гладкий и мягкий [норма]'),
-            (5, 'Мягкие маленькие шарики с чёткими краями [склонность к диарее]'),
-            (6, 'Рыхлые кусочки с неровными краями, кашицеобразный [диарея]'),
-            (7, 'Водянистый, без твёрдых кусочков [сильная диарея]')
-        ]
-        cur.executemany(
-            'INSERT INTO bristol_scale (id, description) VALUES (?, ?)',
-            bristol_data
-        )
+    bristol_data = [
+        (0, 'Отсутствие дефекации'),
+        (1,
+         'Отдельные твёрдые комки, как орехи, трудно проходят [серьезный запор]'
+         ),
+        (2, 'Колбасовидный, но комковатый [запор или склонность к запору]'),
+        (3, 'Колбасовидный с трещинами на поверхности [норма]'),
+        (4, 'Колбасовидный гладкий и мягкий [норма]'),
+        (5, 'Мягкие маленькие шарики с чёткими краями [склонность к диарее]'),
+        (6, 'Рыхлые кусочки с неровными краями, кашицеобразный [диарея]'),
+        (7, 'Водянистый, без твёрдых кусочков [сильная диарея]')
+    ]
+
+    cur.executemany(
+        'INSERT OR REPLACE INTO bristol_scale (id, description) VALUES (?, ?)',
+        bristol_data
+    )
 
 
 # ------------------- Пользователи -------------------
@@ -212,10 +210,10 @@ def get_meal_types(cur):
 def save_meal(cur, user_id, meal_type_id, description, date_str):
     """
     Сохраняет запись о приёме пищи.
-    Для типов завтрак, обед, ужин обновляет существующую запись,
-    для перекуса вставляет новую.
+    Для завтрака/обеда/ужина обновляет существующую запись, иначе создаёт новую.
+    Для перекусов всегда вставляет новую запись.
     """
-    # Получаем имя типа, чтобы понять, перекус ли это
+    # Получаем имя типа
     cur.execute('SELECT name FROM meal_types WHERE id = ?', (meal_type_id,))
     row = cur.fetchone()
     if not row:
@@ -225,23 +223,33 @@ def save_meal(cur, user_id, meal_type_id, description, date_str):
     now = datetime.now().isoformat(timespec='seconds')
 
     if meal_name in ('завтрак', 'обед', 'ужин'):
-        # Обновляем существующую или вставляем новую
+        # Проверяем, есть ли уже запись
         cur.execute('''
-            INSERT INTO meals (
-                    user_id
-                    , date
-                    , meal_type_id
-                    , description
-                    , created_at
-                    , updated_at
-                )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id, date, meal_type_id)
-            DO UPDATE SET
-                description = excluded.description,
-                updated_at = excluded.updated_at
-        ''', (user_id, date_str, meal_type_id, description, now, now))
+            SELECT id FROM meals
+            WHERE user_id = ? AND date = ? AND meal_type_id = ?
+        ''', (user_id, date_str, meal_type_id))
+        existing = cur.fetchone()
 
+        if existing:
+            # Обновляем существующую
+            cur.execute('''
+                UPDATE meals
+                SET description = ?, updated_at = ?
+                WHERE id = ?
+            ''', (description, now, existing['id']))
+        else:
+            # Вставляем новую
+            cur.execute('''
+                INSERT INTO meals (
+                        user_id
+                        , date
+                        , meal_type_id
+                        , description
+                        , created_at
+                        , updated_at
+                    )
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, date_str, meal_type_id, description, now, now))
     else:  # перекус — всегда новая запись
         cur.execute('''
             INSERT INTO meals (
@@ -254,6 +262,7 @@ def save_meal(cur, user_id, meal_type_id, description, date_str):
                 )
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (user_id, date_str, meal_type_id, description, now, now))
+
     return True
 
 
@@ -295,7 +304,7 @@ def delete_meal(cur, meal_id):
 
 # ------------------- Лекарства -------------------
 @with_db
-def save_medicine(cur, user_id, name, dosage, date_str, time_str=None):
+def save_medicine(cur, user_id, name, dosage, date_str):
     now = datetime.now().isoformat(timespec='seconds')
     cur.execute('''
         INSERT INTO medicines (
@@ -303,12 +312,11 @@ def save_medicine(cur, user_id, name, dosage, date_str, time_str=None):
                 , name
                 , dosage
                 , date
-                , time
                 , created_at
                 , updated_at
             )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (user_id, name, dosage, date_str, time_str, now, now))
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (user_id, name, dosage, date_str, now, now))
 
 
 @with_db
@@ -318,24 +326,23 @@ def get_medicines_for_day(cur, user_id, date_str):
             id,
             name,
             dosage,
-            time,
             created_at,
             updated_at
         FROM medicines
         WHERE user_id = ? AND date = ?
-        ORDER BY time NULLS LAST, created_at
+        ORDER BY created_at
     ''', (user_id, date_str))
     return cur.fetchall()
 
 
 @with_db
-def update_medicine(cur, med_id, name, dosage, time_str):
+def update_medicine(cur, med_id, name, dosage):
     now = datetime.now().isoformat(timespec='seconds')
     cur.execute('''
         UPDATE medicines
-        SET name = ?, dosage = ?, time = ?, updated_at = ?
+        SET name = ?, dosage = ?, updated_at = ?
         WHERE id = ?
-    ''', (name, dosage, time_str, now, med_id))
+    ''', (name, dosage, now, med_id))
 
 
 @with_db
@@ -345,19 +352,18 @@ def delete_medicine(cur, med_id):
 
 # ------------------- Стул -------------------
 @with_db
-def save_stool(cur, user_id, quality, date_str, time_str=None):
+def save_stool(cur, user_id, quality, date_str):
     now = datetime.now().isoformat(timespec='seconds')
     cur.execute('''
         INSERT INTO stools (
                 user_id
                 , date
-                , time
                 , quality
                 , created_at
                 , updated_at
             )
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (user_id, date_str, time_str, quality, now, now))
+        VALUES (?, ?, ?, ?, ?)
+    ''', (user_id, date_str, quality, now, now))
 
 
 @with_db
@@ -365,25 +371,24 @@ def get_stools_for_day(cur, user_id, date_str):
     cur.execute('''
         SELECT
             id,
-            time,
             quality,
             created_at,
             updated_at
         FROM stools
         WHERE user_id = ? AND date = ?
-        ORDER BY time NULLS LAST, created_at
+        ORDER BY created_at
     ''', (user_id, date_str))
     return cur.fetchall()
 
 
 @with_db
-def update_stool(cur, stool_id, quality, time_str):
+def update_stool(cur, stool_id, quality):
     now = datetime.now().isoformat(timespec='seconds')
     cur.execute('''
         UPDATE stools
-        SET quality = ?, time = ?, updated_at = ?
+        SET quality = ?, updated_at = ?
         WHERE id = ?
-    ''', (quality, time_str, now, stool_id))
+    ''', (quality, now, stool_id))
 
 
 @with_db

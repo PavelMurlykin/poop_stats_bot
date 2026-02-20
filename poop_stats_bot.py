@@ -32,6 +32,10 @@ from db import (
     get_stools_for_day,
     update_stool,
     delete_stool,
+    save_feeling,
+    get_feelings_for_day,
+    update_feeling,
+    delete_feeling,
     get_bristol_scale
 )
 
@@ -103,6 +107,8 @@ def manual_menu_keyboard():
         InlineKeyboardButton('🍪 Перекус', callback_data='manual_snack'),
         InlineKeyboardButton('💊 Лекарство', callback_data='manual_medicine'),
         InlineKeyboardButton('🚽 Стул', callback_data='manual_stool'),
+        InlineKeyboardButton(
+            '😊 Самочувствие', callback_data='manual_feeling'),
         InlineKeyboardButton('◀ Назад', callback_data='back_to_main')
     )
     return markup
@@ -454,34 +460,42 @@ def show_today_entries(user_id, message_id):
     meals = get_meals_for_day(user_id, today)
     medicines = get_medicines_for_day(user_id, today)
     stools = get_stools_for_day(user_id, today)
+    feelings = get_feelings_for_day(user_id, today)
     bristol_scale = dict(get_bristol_scale())
 
     text = f'📋 <b>Записи за {today}</b>\n\n'
 
-    if not meals and not medicines and not stools:
+    if not meals and not medicines and not stools and not feelings:
         text += 'За сегодня записей нет.'
     else:
         if meals:
             text += '<b>🍽️ Приёмы пищи:</b>\n'
             for m in meals:
                 text += (
-                    f'<b>{m['meal_type']}</b>: {m['description']}'
-                    f' (ред.: /edit_meal_{m['id']})\n'
+                    f'• <b>{m["meal_type"]}</b>: {m["description"]}'
+                    f' (ред.: /edit_meal_{m["id"]})\n'
                 )
         if medicines:
             text += '\n<b>💊 Лекарства:</b>\n'
             for med in medicines:
                 text += (
-                    f'• {med['name']} {med['dosage']}'
-                    f' (ред.: /edit_med_{med['id']})\n'
+                    f'• {med["name"]} {med["dosage"]}'
+                    f' (ред.: /edit_med_{med["id"]})\n'
                 )
         if stools:
             text += '\n<b>🚽 Стул:</b>\n'
             for s in stools:
                 description = bristol_scale.get(s['quality'], 'неизвестно')
                 text += (
-                    f'• {s['quality']} — {description}'
-                    f' (ред.: /edit_stool_{s['id']})\n'
+                    f'• {s["quality"]} — {description}'
+                    f' (ред.: /edit_stool_{s["id"]})\n'
+                )
+        if feelings:
+            text += '\n<b>😊 Самочувствие:</b>\n'
+            for f in feelings:
+                text += (
+                    f'• {f["description"]}'
+                    f' (ред.: /edit_feeling_{f["id"]})\n'
                 )
 
     # Кнопки для редактирования (через колбэки)
@@ -498,7 +512,6 @@ def show_today_entries(user_id, message_id):
 
 def handle_manual_start(user_id, message_id, action):
     """Начинает процесс ручного ввода для указанного действия."""
-    today = datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
     mt = load_meal_types()
 
     if action == 'breakfast':
@@ -517,6 +530,8 @@ def handle_manual_start(user_id, message_id, action):
         start_manual_medicine(user_id, message_id)
     elif action == 'stool':
         start_manual_stool(user_id, message_id)
+    elif action == 'feeling':
+        start_manual_feeling(user_id, message_id)
 
 
 def start_manual_meal(user_id, message_id, meal_type_id):
@@ -572,6 +587,21 @@ def start_manual_stool(user_id, message_id):
         }
 
 
+def start_manual_feeling(user_id, message_id):
+    """Запуск ручного ввода самочувствия: просим описание."""
+    bot.edit_message_text(
+        '😊 Опишите ваше самочувствие:',
+        user_id,
+        message_id
+    )
+    with pending_lock:
+        manual_input[user_id] = {
+            'step': 'wait_feeling_description',
+            'action': 'feeling',
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
+        }
+
+
 def start_editing(user_id, message_id, item_type, item_id):
     """Начинает редактирование указанной записи."""
     if item_type == 'meal':
@@ -604,6 +634,16 @@ def start_editing(user_id, message_id, item_type, item_id):
                 'step': 'edit_stool_quality',
                 'item_id': int(item_id)
             }
+    elif item_type == 'feeling':
+        bot.send_message(
+            user_id,
+            'Введите новое описание самочувствия:'
+        )
+        with pending_lock:
+            manual_input[user_id] = {
+                'step': 'edit_feeling_description',
+                'item_id': int(item_id)
+            }
     bot.edit_message_reply_markup(user_id, message_id, reply_markup=None)
 
 
@@ -633,7 +673,9 @@ def perform_delete(user_id, message_id, item_type, item_id):
         delete_medicine(int(item_id))
     elif item_type == 'stool':
         delete_stool(int(item_id))
-    bot.answer_callback_query(callback_query_id, text='Запись удалена')
+    elif item_type == 'feeling':
+        delete_feeling(int(item_id))
+    bot.answer_callback_query(call.id, text='Запись удалена')
     show_today_entries(user_id, message_id)
 
 
@@ -748,6 +790,21 @@ def handle_text(message):
                 )
                 return
 
+            # Ручной ввод самочувствия
+            if step == 'wait_feeling_description' and state['action'] == 'feeling':
+                save_feeling(
+                    user_id,
+                    text,
+                    state['date']
+                )
+                del manual_input[user_id]
+                bot.reply_to(
+                    message,
+                    '✅ Запись о самочувствии сохранена.',
+                    reply_markup=main_menu()
+                )
+                return
+
             # Редактирование записей
             if step == 'edit_meal_desc':
                 update_meal_description(state['item_id'], text)
@@ -794,6 +851,15 @@ def handle_text(message):
                 bot.reply_to(
                     message,
                     '✅ Запись о стуле обновлена.',
+                    reply_markup=main_menu()
+                )
+                return
+            if step == 'edit_feeling_description':
+                update_feeling(state['item_id'], text)
+                del manual_input[user_id]
+                bot.reply_to(
+                    message,
+                    '✅ Запись о самочувствии обновлена.',
                     reply_markup=main_menu()
                 )
                 return

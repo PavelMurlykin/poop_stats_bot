@@ -89,6 +89,18 @@ def create_tables(cur):
         )
     ''')
 
+    # Самочувствие
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS feelings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            description TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     # Лог уведомлений
     cur.execute('''
         CREATE TABLE IF NOT EXISTS notifications_log (
@@ -394,6 +406,56 @@ def update_stool(cur, stool_id, quality):
 @with_db
 def delete_stool(cur, stool_id):
     cur.execute('DELETE FROM stools WHERE id = ?', (stool_id,))
+
+
+# ------------------- Самочувствие -------------------
+@with_db
+def save_feeling(cur, user_id, description, date_str):
+    """Сохраняет запись о самочувствии."""
+    now = datetime.now().isoformat(timespec='seconds')
+    cur.execute('''
+        INSERT INTO feelings (
+                user_id
+                , date
+                , description
+                , created_at
+                , updated_at
+            )
+        VALUES (?, ?, ?, ?, ?)
+    ''', (user_id, date_str, description, now, now))
+
+
+@with_db
+def get_feelings_for_day(cur, user_id, date_str):
+    """Возвращает все записи о самочувствии за указанный день."""
+    cur.execute('''
+        SELECT
+            id,
+            description,
+            created_at,
+            updated_at
+        FROM feelings
+        WHERE user_id = ? AND date = ?
+        ORDER BY created_at
+    ''', (user_id, date_str))
+    return cur.fetchall()
+
+
+@with_db
+def update_feeling(cur, feeling_id, new_description):
+    """Обновляет описание конкретной записи о самочувствии."""
+    now = datetime.now().isoformat(timespec='seconds')
+    cur.execute('''
+        UPDATE feelings
+        SET description = ?, updated_at = ?
+        WHERE id = ?
+    ''', (new_description, now, feeling_id))
+
+
+@with_db
+def delete_feeling(cur, feeling_id):
+    """Удаляет запись о самочувствии."""
+    cur.execute('DELETE FROM feelings WHERE id = ?', (feeling_id,))
 
 
 # ------------------- Бристольская шкала -------------------

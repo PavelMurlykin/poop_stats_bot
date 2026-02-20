@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime
 from dotenv import load_dotenv
+from export import generate_user_report
 
 import telebot
 from telebot.types import (
@@ -68,6 +69,21 @@ def load_meal_types():
     return MEAL_TYPES
 
 
+# ------------------- Функция для фоновой отправки отчёта -------------------
+def generate_and_send_report(user_id):
+    """Генерирует отчёт в фоне и отправляет пользователю."""
+    try:
+        excel_file = generate_user_report(user_id)
+        bot.send_document(
+            user_id,
+            excel_file,
+            visible_file_name=f'Статистика_{datetime.now(MOSCOW_TZ).strftime("%Y%m%d_%H%M%S")}.xlsx',
+            caption='📊 Ваша полная статистика'
+        )
+    except Exception as e:
+        bot.send_message(user_id, f'❌ Ошибка при формировании отчёта: {e}')
+
+
 # ------------------- Клавиатуры -------------------
 def main_menu():
     """Главное меню."""
@@ -79,6 +95,8 @@ def main_menu():
                              callback_data='manual_menu'),
         InlineKeyboardButton('📋 Дневная статистика',
                              callback_data='show_today'),
+        InlineKeyboardButton('📥 Полная статистика',
+                             callback_data='export_all_stats'),
         InlineKeyboardButton('❓ Помощь', callback_data='help')
     )
     return markup
@@ -415,7 +433,7 @@ def callback_handler(call):
         parts = data.split('_', 2)
         if len(parts) == 3:
             _, item_type, item_id = parts
-            perform_delete(user_id, call.message.message_id,
+            perform_delete(call, user_id, call.message.message_id,
                            item_type, item_id)
         return
 
@@ -450,6 +468,17 @@ def callback_handler(call):
             call.message.message_id,
             reply_markup=None
         )
+        return
+
+    # Экспорт всей статистики
+    if data == 'export_all_stats':
+        bot.answer_callback_query(call.id, text="Начинаю подготовку отчёта...")
+        bot.send_message(
+            user_id, "🔄 Формирую отчёт, это может занять некоторое время. Я сообщу, когда он будет готов.")
+        thread = threading.Thread(
+            target=generate_and_send_report, args=(user_id,))
+        thread.daemon = True
+        thread.start()
         return
 
 
@@ -665,7 +694,7 @@ def confirm_delete(user_id, message_id, item_type, item_id):
     )
 
 
-def perform_delete(user_id, message_id, item_type, item_id):
+def perform_delete(call, user_id, message_id, item_type, item_id):
     """Удаляет запись и показывает обновлённый список."""
     if item_type == 'meal':
         delete_meal(int(item_id))

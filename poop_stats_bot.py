@@ -1,4 +1,5 @@
 import os
+import re
 import pytz
 import threading
 import time
@@ -318,6 +319,133 @@ def cmd_help(message):
         parse_mode='HTML',
         reply_markup=back_button()
     )
+
+
+# ------------------- Обработчики команд редактирования (из текста) -------------------
+@bot.message_handler(regexp=r'^/edit_meal_(\d+)$')
+def handle_edit_meal_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/edit_meal_(\d+)$', message.text)
+    if match:
+        meal_id = int(match.group(1))
+        bot.send_message(user_id, 'Введите новое описание блюда:')
+        with pending_lock:
+            manual_input[user_id] = {
+                'step': 'edit_meal_desc',
+                'action': 'meal',
+                'item_id': meal_id
+            }
+
+
+@bot.message_handler(regexp=r'^/edit_med_(\d+)$')
+def handle_edit_med_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/edit_med_(\d+)$', message.text)
+    if match:
+        med_id = int(match.group(1))
+        bot.send_message(
+            user_id, 'Введите новое название лекарства (или /cancel для отмены):')
+        with pending_lock:
+            manual_input[user_id] = {
+                'step': 'edit_med_name',
+                'action': 'medicine',
+                'item_id': med_id
+            }
+
+
+@bot.message_handler(regexp=r'^/edit_stool_(\d+)$')
+def handle_edit_stool_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/edit_stool_(\d+)$', message.text)
+    if match:
+        stool_id = int(match.group(1))
+        bot.send_message(user_id, 'Введите новую оценку (0–7):')
+        with pending_lock:
+            manual_input[user_id] = {
+                'step': 'edit_stool_quality',
+                'action': 'stool',
+                'item_id': stool_id
+            }
+
+
+@bot.message_handler(regexp=r'^/edit_feeling_(\d+)$')
+def handle_edit_feeling_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/edit_feeling_(\d+)$', message.text)
+    if match:
+        feeling_id = int(match.group(1))
+        bot.send_message(user_id, 'Введите новое описание самочувствия:')
+        with pending_lock:
+            manual_input[user_id] = {
+                'step': 'edit_feeling_description',
+                'action': 'feeling',
+                'item_id': feeling_id
+            }
+
+
+# ------------------- Обработчики команд удаления -------------------
+@bot.message_handler(regexp=r'^/delete_meal_(\d+)$')
+def handle_delete_meal_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/delete_meal_(\d+)$', message.text)
+    if match:
+        meal_id = int(match.group(1))
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton(
+                '✅ Да, удалить', callback_data=f'confirm_delete_meal_{meal_id}'),
+            InlineKeyboardButton('❌ Нет', callback_data='cancel_delete')
+        )
+        bot.send_message(
+            user_id, '❓ Вы уверены, что хотите удалить эту запись?', reply_markup=markup)
+
+
+@bot.message_handler(regexp=r'^/delete_med_(\d+)$')
+def handle_delete_med_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/delete_med_(\d+)$', message.text)
+    if match:
+        med_id = int(match.group(1))
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton(
+                '✅ Да, удалить', callback_data=f'confirm_delete_med_{med_id}'),
+            InlineKeyboardButton('❌ Нет', callback_data='cancel_delete')
+        )
+        bot.send_message(
+            user_id, '❓ Вы уверены, что хотите удалить эту запись?', reply_markup=markup)
+
+
+@bot.message_handler(regexp=r'^/delete_stool_(\d+)$')
+def handle_delete_stool_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/delete_stool_(\d+)$', message.text)
+    if match:
+        stool_id = int(match.group(1))
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton(
+                '✅ Да, удалить', callback_data=f'confirm_delete_stool_{stool_id}'),
+            InlineKeyboardButton('❌ Нет', callback_data='cancel_delete')
+        )
+        bot.send_message(
+            user_id, '❓ Вы уверены, что хотите удалить эту запись?', reply_markup=markup)
+
+
+@bot.message_handler(regexp=r'^/delete_feeling_(\d+)$')
+def handle_delete_feeling_command(message):
+    user_id = message.from_user.id
+    match = re.match(r'^/delete_feeling_(\d+)$', message.text)
+    if match:
+        feeling_id = int(match.group(1))
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton(
+                '✅ Да, удалить', callback_data=f'confirm_delete_feeling_{feeling_id}'),
+            InlineKeyboardButton('❌ Нет', callback_data='cancel_delete')
+        )
+        bot.send_message(
+            user_id, '❓ Вы уверены, что хотите удалить эту запись?', reply_markup=markup)
 
 
 # ------------------- Обработчики колбэков -------------------
@@ -641,6 +769,7 @@ def start_editing(user_id, message_id, item_type, item_id):
         with pending_lock:
             manual_input[user_id] = {
                 'step': 'edit_meal_desc',
+                'action': 'meal',
                 'item_id': int(item_id)
             }
     elif item_type == 'med':
@@ -651,6 +780,7 @@ def start_editing(user_id, message_id, item_type, item_id):
         with pending_lock:
             manual_input[user_id] = {
                 'step': 'edit_med_name',
+                'action': 'medicine',
                 'item_id': int(item_id)
             }
     elif item_type == 'stool':
@@ -661,6 +791,7 @@ def start_editing(user_id, message_id, item_type, item_id):
         with pending_lock:
             manual_input[user_id] = {
                 'step': 'edit_stool_quality',
+                'action': 'stool',
                 'item_id': int(item_id)
             }
     elif item_type == 'feeling':
@@ -671,6 +802,7 @@ def start_editing(user_id, message_id, item_type, item_id):
         with pending_lock:
             manual_input[user_id] = {
                 'step': 'edit_feeling_description',
+                'action': 'feeling',
                 'item_id': int(item_id)
             }
     bot.edit_message_reply_markup(user_id, message_id, reply_markup=None)

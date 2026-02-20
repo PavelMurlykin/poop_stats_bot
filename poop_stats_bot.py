@@ -1,4 +1,5 @@
 import os
+import pytz
 import threading
 import time
 from datetime import datetime
@@ -39,6 +40,7 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TIMEOUT = 30
 DATE_FORMAT = '%d.%m.%Y'
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
@@ -140,7 +142,7 @@ def send_breakfast_question(user_id):
     with pending_lock:
         pending[user_id] = {
             'type': 'breakfast',
-            'date': datetime.now().strftime(DATE_FORMAT)
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
         }
 
 
@@ -153,7 +155,7 @@ def send_lunch_question(user_id):
     with pending_lock:
         pending[user_id] = {
             'type': 'lunch',
-            'date': datetime.now().strftime(DATE_FORMAT)
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
         }
 
 
@@ -166,7 +168,7 @@ def send_dinner_question(user_id):
     with pending_lock:
         pending[user_id] = {
             'type': 'dinner',
-            'date': datetime.now().strftime(DATE_FORMAT)
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
         }
 
 
@@ -187,7 +189,7 @@ def send_toilet_question(user_id):
     with pending_lock:
         pending[user_id] = {
             'type': 'toilet',
-            'date': datetime.now().strftime(DATE_FORMAT)
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
         }
 
 
@@ -195,7 +197,7 @@ def send_toilet_question(user_id):
 def scheduler():
     """Фоновый поток: проверка времени и отправка вопросов."""
     while True:
-        now = datetime.now()
+        now = datetime.now(MOSCOW_TZ)
         current_time = now.strftime('%H:%M')
         current_date = now.strftime(DATE_FORMAT)
 
@@ -448,7 +450,7 @@ def callback_handler(call):
 # ------------------- Функции для ручного ввода и просмотра -------------------
 def show_today_entries(user_id, message_id):
     """Показывает все записи за сегодня и даёт кнопки для редактирования."""
-    today = datetime.now().strftime(DATE_FORMAT)
+    today = datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
     meals = get_meals_for_day(user_id, today)
     medicines = get_medicines_for_day(user_id, today)
     stools = get_stools_for_day(user_id, today)
@@ -496,7 +498,7 @@ def show_today_entries(user_id, message_id):
 
 def handle_manual_start(user_id, message_id, action):
     """Начинает процесс ручного ввода для указанного действия."""
-    today = datetime.now().strftime(DATE_FORMAT)
+    today = datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
     mt = load_meal_types()
 
     if action == 'breakfast':
@@ -529,7 +531,7 @@ def start_manual_meal(user_id, message_id, meal_type_id):
             'step': 'wait_description',
             'action': 'meal',
             'meal_type_id': meal_type_id,
-            'date': datetime.now().strftime(DATE_FORMAT)
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
         }
 
 
@@ -544,7 +546,7 @@ def start_manual_medicine(user_id, message_id):
         manual_input[user_id] = {
             'step': 'wait_name',
             'action': 'medicine',
-            'date': datetime.now().strftime(DATE_FORMAT)
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
         }
 
 
@@ -566,7 +568,7 @@ def start_manual_stool(user_id, message_id):
         manual_input[user_id] = {
             'step': 'wait_quality',
             'action': 'stool',
-            'date': datetime.now().strftime(DATE_FORMAT)
+            'date': datetime.now(MOSCOW_TZ).strftime(DATE_FORMAT)
         }
 
 

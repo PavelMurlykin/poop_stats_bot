@@ -16,9 +16,6 @@ PG_USER = os.getenv('PG_USER', 'postgres').strip()
 PG_PASSWORD = os.getenv('PG_PASSWORD', '').strip()
 PG_CONNECT_TIMEOUT = int(os.getenv('PG_CONNECT_TIMEOUT', '10'))
 
-# Source SQLite path for one-time migration script.
-SQLITE_PATH = os.getenv('SQLITE_PATH', os.getenv('DB_PATH', 'db.sqlite3')).strip()
-
 DATE_FORMAT_STORAGE = '%Y-%m-%d'
 DATE_FORMAT_DISPLAY = '%d.%m.%Y'
 

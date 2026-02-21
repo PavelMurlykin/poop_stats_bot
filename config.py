@@ -1,12 +1,13 @@
 import os
-from dotenv import load_dotenv
+
 import pytz
+from dotenv import load_dotenv
 
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '').strip()
 if not TELEGRAM_TOKEN:
-    raise RuntimeError('TELEGRAM_TOKEN is not set. Put it into .env')
+    raise RuntimeError('TELEGRAM_TOKEN не установлен, добавьте его в .env')
 
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 PG_HOST = os.getenv('PG_HOST', 'localhost').strip()

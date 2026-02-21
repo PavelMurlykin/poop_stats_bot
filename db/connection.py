@@ -1,14 +1,8 @@
 import psycopg
 from psycopg.rows import dict_row
-from config import (
-    DATABASE_URL,
-    PG_HOST,
-    PG_PORT,
-    PG_DB,
-    PG_USER,
-    PG_PASSWORD,
-    PG_CONNECT_TIMEOUT,
-)
+
+from config import (DATABASE_URL, PG_CONNECT_TIMEOUT, PG_DB, PG_HOST,
+                    PG_PASSWORD, PG_PORT, PG_USER)
 
 
 def get_connection() -> psycopg.Connection:
@@ -30,7 +24,12 @@ def get_connection() -> psycopg.Connection:
 
 
 def with_db(fn):
-    # Decorator: opens connection, commits/rolls back, closes.
+    """
+    Декторатор для работы с SQL.
+
+    - Открывает и закрывает соединения.
+    - Выполняет commit и rollback транзакций.
+    """
     def wrapper(*args, **kwargs):
         conn = get_connection()
         try:

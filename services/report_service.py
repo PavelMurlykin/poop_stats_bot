@@ -1,9 +1,10 @@
 import io
-from datetime import datetime, date
-import pandas as pd
-from config import DATE_FORMAT_STORAGE, DATE_FORMAT_DISPLAY
-from db.repositories import fetch_all_for_report
+from datetime import date, datetime
 
+import pandas as pd
+
+from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE
+from db.repositories import fetch_all_for_report
 
 BRISTOL = {
     0: 'Отсутствие дефекации',
@@ -18,6 +19,7 @@ BRISTOL = {
 
 
 def _to_display(date_value) -> str:
+    """To display."""
     if isinstance(date_value, datetime):
         return date_value.strftime(DATE_FORMAT_DISPLAY)
     if isinstance(date_value, date):
@@ -27,6 +29,7 @@ def _to_display(date_value) -> str:
 
 
 def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
+    """Generate user report xlsx."""
     data = fetch_all_for_report(user_id)
     meals = data['meals']
     medicines = data['medicines']
@@ -40,7 +43,10 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
         [f['date'] for f in feelings]
     ))
 
-    by_date_meals, by_date_meds, by_date_stools, by_date_feelings = {}, {}, {}, {}
+    by_date_meals = {}
+    by_date_meds = {}
+    by_date_stools = {}
+    by_date_feelings = {}
     for m in meals:
         by_date_meals.setdefault(m['date'], []).append(m)
     for m in medicines:
@@ -73,7 +79,7 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
         stool_list = []
         for s in by_date_stools.get(d, []):
             q = int(s['quality'])
-            stool_list.append(f'{q} — {BRISTOL.get(q, "неизвестно")}')
+            stool_list.append(f'{q} — {BRISTOL.get(q, 'неизвестно')}')
 
         feeling_list = [f['description'] for f in by_date_feelings.get(d, [])]
 
@@ -94,7 +100,7 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
     df = pd.DataFrame(rows, columns=[
         'Дата', 'Завтрак', 'Обед', 'Ужин',
         'Количество перекусов', 'Перекусы',
-        'Количество лекарств', 'Лекарства',
+        'Количество приемов лекарств', 'Лекарства',
         'Количество походов в туалет', 'Качество стула',
         'Самочувствие'
     ])

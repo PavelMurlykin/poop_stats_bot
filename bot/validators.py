@@ -1,8 +1,10 @@
 from datetime import datetime
+
 from config import MAX_TEXT_LENGTH
 
 
 def validate_text(value: str) -> str:
+    """Validate text."""
     v = (value or '').strip()
     if not v:
         raise ValueError('Пустой текст')
@@ -13,6 +15,7 @@ def validate_text(value: str) -> str:
 
 
 def validate_time_hhmm(value: str) -> bool:
+    """Validate time hhmm."""
     try:
         datetime.strptime(value, '%H:%M')
         return True
@@ -21,6 +24,7 @@ def validate_time_hhmm(value: str) -> bool:
 
 
 def validate_stool_quality(value: str) -> int:
+    """Validate stool quality."""
     s = (value or '').strip()
     if not s.isdigit():
         raise ValueError('Введите число от 0 до 7.')

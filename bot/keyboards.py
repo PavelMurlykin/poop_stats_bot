@@ -1,7 +1,8 @@
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 def main_menu() -> InlineKeyboardMarkup:
+    """Главное меню."""
     m = InlineKeyboardMarkup(row_width=2)
     m.add(
         InlineKeyboardButton('⏰ Расписание', callback_data='show_timetable'),
@@ -18,12 +19,14 @@ def main_menu() -> InlineKeyboardMarkup:
 
 
 def back_to_main() -> InlineKeyboardMarkup:
+    """Меню - Вернуться в главное меню."""
     m = InlineKeyboardMarkup()
     m.add(InlineKeyboardButton('◀ Назад', callback_data='back_to_main'))
     return m
 
 
 def edit_timetable_menu() -> InlineKeyboardMarkup:
+    """Меню - Изменить расписание."""
     m = InlineKeyboardMarkup(row_width=2)
     m.add(
         InlineKeyboardButton('🍳 Завтрак', callback_data='set_time_breakfast'),
@@ -36,6 +39,7 @@ def edit_timetable_menu() -> InlineKeyboardMarkup:
 
 
 def manual_menu() -> InlineKeyboardMarkup:
+    """Меню - Ручное добавление событий."""
     m = InlineKeyboardMarkup(row_width=2)
     m.add(
         InlineKeyboardButton(
@@ -52,10 +56,14 @@ def manual_menu() -> InlineKeyboardMarkup:
 
 
 def confirm_delete(item_type: str, item_id: int) -> InlineKeyboardMarkup:
+    """Меню - Подтвердить удаление."""
     m = InlineKeyboardMarkup(row_width=2)
     m.add(
         InlineKeyboardButton(
-            '✅ Да, удалить', callback_data=f'confirm_delete:{item_type}:{item_id}'),
-        InlineKeyboardButton('❌ Нет', callback_data='cancel_delete'),
+            '✅ Да, удалить',
+            callback_data=f'confirm_delete:{item_type}:{item_id}'),
+        InlineKeyboardButton(
+            '❌ Нет',
+            callback_data='cancel_delete'),
     )
     return m

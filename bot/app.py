@@ -464,29 +464,50 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
     else:
         if meals:
             lines.append('<b>🍽️ Еда:</b>')
+            meal_order = [
+                ('breakfast', 'Завтрак'),
+                ('lunch', 'Обед'),
+                ('dinner', 'Ужин'),
+                ('snack', 'Перекус'),
+            ]
+            grouped = {meal_type: [] for meal_type, _ in meal_order}
             for m in meals:
-                mt_ru = {'breakfast': 'завтрак', 'lunch': 'обед', 'dinner': 'ужин',
-                         'snack': 'перекус'}.get(m['meal_type'], m['meal_type'])
-                lines.append(
-                    f'• <b>{mt_ru}</b>: {m["description"]} (ред.: /edit_meal_{m["id"]}) (удал.: /delete_meal_{m["id"]})')
+                if m['meal_type'] in grouped:
+                    grouped[m['meal_type']].append(m)
+            for meal_type, meal_title in meal_order:
+                for m in grouped[meal_type]:
+                    lines.append(
+                        f'• <b>{meal_title}</b>: {m["description"]}'
+                        f'\n(ред.: /edit_meal_{m["id"]})'
+                        f'\n(удал.: /delete_meal_{m["id"]})\n'
+                    )
         if meds:
             lines.append('\n<b>💊 Лекарства:</b>')
             for med in meds:
                 dosage = (med['dosage'] or '').strip()
                 tail = f' {dosage}' if dosage else ''
                 lines.append(
-                    f'• {med["name"]}{tail} (ред.: /edit_med_{med["id"]}) (удал.: /delete_med_{med["id"]})')
+                    f'• {med["name"]}{tail}'
+                    f'\n(ред.: /edit_med_{med["id"]})'
+                    f'\n(удал.: /delete_med_{med["id"]})\n'
+                )
         if stools:
             lines.append('\n<b>🚽 Туалет:</b>')
             for s in stools:
                 q = int(s['quality'])
                 lines.append(
-                    f'• {q} — {BRISTOL.get(q, "неизвестно")} (ред.: /edit_stool_{s["id"]}) (удал.: /delete_stool_{s["id"]})')
+                    f'• {q} — {BRISTOL.get(q, "неизвестно")}'
+                    f'\n(ред.: /edit_stool_{s["id"]})'
+                    f'\n(удал.: /delete_stool_{s["id"]})\n'
+                )
         if feelings:
             lines.append('\n<b>😊 Самочувствие:</b>')
             for f in feelings:
                 lines.append(
-                    f'• {f["description"]} (ред.: /edit_feeling_{f["id"]}) (удал.: /delete_feeling_{f["id"]})')
+                    f'• {f["description"]}'
+                    f'\n(ред.: /edit_feeling_{f["id"]})'
+                    f'\n(удал.: /delete_feeling_{f["id"]})\n'
+                )
 
     bot.edit_message_text('\n'.join(lines), user_id,
                           message_id, reply_markup=back_to_main())

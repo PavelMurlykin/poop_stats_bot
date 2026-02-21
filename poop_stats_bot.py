@@ -125,7 +125,7 @@ def manual_menu_keyboard():
         InlineKeyboardButton('🍽️ Ужин', callback_data='manual_dinner'),
         InlineKeyboardButton('🍪 Перекус', callback_data='manual_snack'),
         InlineKeyboardButton('💊 Лекарство', callback_data='manual_medicine'),
-        InlineKeyboardButton('🚽 Стул', callback_data='manual_stool'),
+        InlineKeyboardButton('🚽 Туалет', callback_data='manual_stool'),
         InlineKeyboardButton(
             '😊 Самочувствие', callback_data='manual_feeling'),
         InlineKeyboardButton('◀ Назад', callback_data='back_to_main')
@@ -640,7 +640,7 @@ def show_today_entries(user_id, message_id):
                     f' (ред.: /edit_med_{med["id"]})\n'
                 )
         if stools:
-            text += '\n<b>🚽 Стул:</b>\n'
+            text += '\n<b>🚽 Туалет:</b>\n'
             for s in stools:
                 description = bristol_scale.get(s['quality'], 'неизвестно')
                 text += (

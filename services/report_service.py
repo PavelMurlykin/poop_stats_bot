@@ -2,9 +2,35 @@ import io
 from datetime import date, datetime
 
 import pandas as pd
+from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.utils import get_column_letter
 
 from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE
 from db.repositories import fetch_all_for_report
+
+DATE_COLUMN_INDEXES = {1}
+NUMBER_COLUMN_INDEXES = {5, 7, 9}
+CENTERED_COLUMN_INDEXES = DATE_COLUMN_INDEXES | NUMBER_COLUMN_INDEXES
+
+DATE_COLUMN_WIDTH = 12
+COUNT_COLUMN_WIDTH = 12
+SHORT_TEXT_COLUMN_WIDTH = 18
+LONG_TEXT_COLUMN_WIDTH = 24
+XL_TEXT_COLUMN_WIDTH = 28
+
+COLUMN_WIDTHS = {
+    1: DATE_COLUMN_WIDTH,
+    2: SHORT_TEXT_COLUMN_WIDTH,
+    3: SHORT_TEXT_COLUMN_WIDTH,
+    4: SHORT_TEXT_COLUMN_WIDTH,
+    5: COUNT_COLUMN_WIDTH,
+    6: LONG_TEXT_COLUMN_WIDTH,
+    7: COUNT_COLUMN_WIDTH,
+    8: LONG_TEXT_COLUMN_WIDTH,
+    9: COUNT_COLUMN_WIDTH,
+    10: XL_TEXT_COLUMN_WIDTH,
+    11: LONG_TEXT_COLUMN_WIDTH,
+}
 
 BRISTOL = {
     0: 'Отсутствие дефекации',
@@ -26,6 +52,42 @@ def _to_display(date_value) -> str:
         return date_value.strftime(DATE_FORMAT_DISPLAY)
     dt = datetime.strptime(str(date_value), DATE_FORMAT_STORAGE)
     return dt.strftime(DATE_FORMAT_DISPLAY)
+
+
+def _apply_worksheet_style(worksheet,
+                           total_rows: int,
+                           total_columns: int
+                           ) -> None:
+    """Apply table style for readability in exported report."""
+    thin = Side(style='thin', color='000000')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    header_font = Font(bold=True)
+    header_alignment = Alignment(
+        horizontal='center', vertical='center', wrap_text=True)
+    text_alignment = Alignment(
+        horizontal='left', vertical='top', wrap_text=True)
+    centered_alignment = Alignment(horizontal='center', vertical='center')
+
+    for col_idx, width in COLUMN_WIDTHS.items():
+        worksheet.column_dimensions[get_column_letter(col_idx)].width = width
+
+    worksheet.row_dimensions[1].height = 36
+
+    for row in worksheet.iter_rows(min_row=1,
+                                   max_row=total_rows,
+                                   min_col=1,
+                                   max_col=total_columns
+                                   ):
+        for cell in row:
+            cell.border = border
+            if cell.row == 1:
+                cell.font = header_font
+                cell.alignment = header_alignment
+            elif cell.column in CENTERED_COLUMN_INDEXES:
+                cell.alignment = centered_alignment
+            else:
+                cell.alignment = text_alignment
 
 
 def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
@@ -74,7 +136,7 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
         for med in by_date_meds.get(d, []):
             nm = med['name']
             ds = (med.get('dosage') or '').strip()
-            meds_list.append(f'{nm} {ds}'.strip())
+            meds_list.append(f'{nm} ({ds})'.strip())
 
         stool_list = []
         for s in by_date_stools.get(d, []):
@@ -91,10 +153,10 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
             len(snacks),
             '; '.join(snacks),
             len(meds_list),
-            '; '.join(meds_list),
+            '\n'.join(meds_list),
             len(stool_list),
-            '; '.join(stool_list),
-            '; '.join(feeling_list),
+            '\n'.join(stool_list),
+            '\n'.join(feeling_list),
         ])
 
     df = pd.DataFrame(rows, columns=[
@@ -108,5 +170,11 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Статистика')
+        worksheet = writer.sheets['Статистика']
+        _apply_worksheet_style(
+            worksheet,
+            total_rows=len(df.index) + 1,
+            total_columns=len(df.columns),
+        )
     output.seek(0)
     return output

@@ -553,7 +553,7 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
                 ('breakfast', 'Завтрак'),
                 ('lunch', 'Обед'),
                 ('dinner', 'Ужин'),
-                ('snack', 'Перекусы'),
+                ('snack', 'Перекус'),
             ]
             grouped = {meal_type: [] for meal_type, _ in meal_order}
             for meal in meals:

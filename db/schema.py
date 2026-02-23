@@ -19,22 +19,6 @@ def init_db(cur) -> None:
         )
         ''',
         '''
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS wakeup_time TEXT NOT NULL DEFAULT '07:00'
-        ''',
-        '''
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS bed_time TEXT NOT NULL DEFAULT '23:00'
-        ''',
-        '''
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()
-        ''',
-        '''
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-        ''',
-        '''
         CREATE TABLE IF NOT EXISTS meals (
             id BIGSERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL,
@@ -113,22 +97,14 @@ def init_db(cur) -> None:
             id BIGSERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL,
             type TEXT NOT NULL CHECK(
-                type IN ('breakfast', 'lunch', 'dinner', 'toilet', 'sleep_quality')
+                type IN ('breakfast', 'lunch', 'dinner',
+                        'toilet', 'sleep_quality')
             ),
             date DATE NOT NULL,
             sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE(user_id, type, date),
             FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
         )
-        ''',
-        '''
-        ALTER TABLE notifications_log
-        DROP CONSTRAINT IF EXISTS notifications_log_type_check
-        ''',
-        '''
-        ALTER TABLE notifications_log
-        ADD CONSTRAINT notifications_log_type_check
-        CHECK(type IN ('breakfast', 'lunch', 'dinner', 'toilet', 'sleep_quality'))
         ''',
         'CREATE INDEX IF NOT EXISTS idx_meals_user_date '
         'ON meals(user_id, date)',

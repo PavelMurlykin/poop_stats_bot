@@ -453,6 +453,25 @@ def get_water_for_day(cur, user_id: int, date_iso: str) -> int:
 
 
 @with_db
+def set_water_for_day(cur, user_id: int, date_iso: str, glasses_count: int) -> int:
+    """Set exact water counter value for date."""
+    now = _utc_now()
+    date_val = _parse_date(date_iso)
+    cur.execute(
+        'INSERT INTO water('
+        'user_id, date, glasses_count, created_at, updated_at'
+        ') VALUES (%s, %s, %s, %s, %s) '
+        'ON CONFLICT(user_id, date) DO UPDATE SET '
+        'glasses_count = EXCLUDED.glasses_count, '
+        'updated_at = EXCLUDED.updated_at '
+        'RETURNING glasses_count',
+        (user_id, date_val, glasses_count, now, now),
+    )
+    row = cur.fetchone()
+    return int(row['glasses_count']) if row else glasses_count
+
+
+@with_db
 def list_feelings_for_day(cur, user_id: int, date_iso: str):
     """List feelings for date."""
     date_val = _parse_date(date_iso)

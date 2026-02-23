@@ -24,7 +24,7 @@ from db.repositories import (add_feeling, add_medicine, add_stool,
                              list_feelings_for_day, list_meals_for_day,
                              list_medicines_for_day, list_stools_for_day,
                              register_user, update_feeling, update_meal,
-                             update_medicine, update_stool, update_user_time,
+                             set_water_for_day, update_medicine, update_stool, update_user_time,
                              upsert_meal, upsert_sleep_quality,
                              upsert_sleep_times)
 from db.schema import init_db
@@ -262,6 +262,26 @@ def build_app(bot: telebot.TeleBot) -> None:
         feeling_id = int(re.match(r'^/edit_feeling_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState('edit', 'feeling_desc', {'id': feeling_id}))
         bot.reply_to(message, 'Введите новое описание:')
+
+    @bot.message_handler(regexp=r'^/edit_water$')
+    def edit_water_cmd(message: Message):
+        states.set(message.from_user.id, UserState('edit', 'water_count_today', {'date': _today_iso()}))
+        bot.reply_to(message, 'Введите количество стаканов воды за сегодня (целое число, 0+):')
+
+    @bot.message_handler(regexp=r'^/edit_sleep_wakeup$')
+    def edit_sleep_wakeup_cmd(message: Message):
+        states.set(message.from_user.id, UserState('edit', 'sleep_wakeup_today', {'date': _today_iso()}))
+        bot.reply_to(message, 'Введите время подъема в формате ЧЧ:ММ:')
+
+    @bot.message_handler(regexp=r'^/edit_sleep_bed$')
+    def edit_sleep_bed_cmd(message: Message):
+        states.set(message.from_user.id, UserState('edit', 'sleep_bed_today', {'date': _today_iso()}))
+        bot.reply_to(message, 'Введите время отхода ко сну в формате ЧЧ:ММ:')
+
+    @bot.message_handler(regexp=r'^/edit_sleep_quality$')
+    def edit_sleep_quality_cmd(message: Message):
+        states.set(message.from_user.id, UserState('edit', 'sleep_quality_today', {'date': _today_iso()}))
+        bot.reply_to(message, 'Введите описание качества сна:')
 
     @bot.message_handler(regexp=r'^/delete_(meal|med|stool|feeling)_(\d+)$')
     def delete_cmd(message: Message):
@@ -544,6 +564,38 @@ def build_app(bot: telebot.TeleBot) -> None:
                     )
                     states.clear(user_id)
                     return
+                if state.step == 'water_count_today':
+                    if not text.isdigit():
+                        raise ValueError('Введите целое число от 0 и больше.')
+                    water_count = int(text)
+                    set_water_for_day(user_id, state.data['date'], water_count)
+                    bot.reply_to(message, '✅ Вода обновлена.', reply_markup=main_menu())
+                    states.clear(user_id)
+                    return
+
+                if state.step == 'sleep_wakeup_today':
+                    if not validate_time_hhmm(text):
+                        raise ValueError('Неверный формат. Введите время ЧЧ:ММ.')
+                    upsert_sleep_times(user_id, state.data['date'], wakeup_time=text)
+                    bot.reply_to(message, '✅ Подъем обновлен.', reply_markup=main_menu())
+                    states.clear(user_id)
+                    return
+
+                if state.step == 'sleep_bed_today':
+                    if not validate_time_hhmm(text):
+                        raise ValueError('Неверный формат. Введите время ЧЧ:ММ.')
+                    upsert_sleep_times(user_id, state.data['date'], bed_time=text)
+                    bot.reply_to(message, '✅ Время отхода ко сну обновлено.', reply_markup=main_menu())
+                    states.clear(user_id)
+                    return
+
+                if state.step == 'sleep_quality_today':
+                    desc = validate_text(text)
+                    upsert_sleep_quality(user_id, state.data['date'], desc)
+                    bot.reply_to(message, '✅ Качество сна обновлено.', reply_markup=main_menu())
+                    states.clear(user_id)
+                    return
+
             except ValueError as error:
                 bot.reply_to(message, f'❌ {error}')
                 return
@@ -741,19 +793,24 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
                 f'\n(ред.: /edit_feeling_{feeling_id})'
                 f'\n(удал.: /delete_feeling_{feeling_id})\n'
             )
+    lines.append('\n💧 <b>Вода:</b>')
+    lines.append(
+        f'- Выпито стаканов: {water_glasses}'
+        '\n(ред.: /edit_water)\n'
+    )
 
-    if water_glasses:
-        lines.append('\n💧 <b>Вода:</b>')
-        lines.append(f'- Выпито стаканов: {water_glasses}')
-
+    wakeup_time = '--:--'
+    bed_time = '--:--'
+    quality_desc = 'не указано'
     if sleep:
         wakeup_time = sleep.get('wakeup_time', '--:--')
         bed_time = sleep.get('bed_time', '--:--')
         quality_desc = (sleep.get('quality_description') or '').strip() or 'не указано'
-        lines.append('\n🛌 <b>Сон:</b>')
-        lines.append(f'- Подъем: {wakeup_time}')
-        lines.append(f'- Отход ко сну: {bed_time}')
-        lines.append(f'- Качество сна: {quality_desc}')
+
+    lines.append('\n🛌 <b>Сон:</b>')
+    lines.append(f'- Подъем: {wakeup_time}\n(ред.: /edit_sleep_wakeup)\n')
+    lines.append(f'- Отход ко сну: {bed_time}\n(ред.: /edit_sleep_bed)\n')
+    lines.append(f'- Качество сна: {quality_desc}\n(ред.: /edit_sleep_quality)\n')
 
     if len(lines) == 1:
         lines.append('За сегодня записей нет.')

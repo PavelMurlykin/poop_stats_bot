@@ -49,8 +49,6 @@ def manual_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton('💊 Лекарство', callback_data='manual_medicine'),
         InlineKeyboardButton('🚽 Туалет', callback_data='manual_stool'),
         InlineKeyboardButton('😊 Самочувствие', callback_data='manual_feeling'),
-        InlineKeyboardButton('🌅 Сон: подъем', callback_data='manual_sleep_wakeup'),
-        InlineKeyboardButton('🌙 Сон: ко сну', callback_data='manual_sleep_bed'),
         InlineKeyboardButton('🛌 Качество сна', callback_data='manual_sleep_quality'),
         InlineKeyboardButton('◀ Назад', callback_data='back_to_main'),
     )

@@ -6,7 +6,7 @@ from datetime import datetime
 
 import telebot
 from telebot.apihelper import ApiTelegramException
-from telebot.types import CallbackQuery, Message
+from telebot.types import BotCommand, CallbackQuery, MenuButtonCommands, Message
 
 from bot.keyboards import (back_to_main, confirm_delete, edit_timetable_menu,
                            main_menu, manual_menu)
@@ -75,6 +75,35 @@ def _today_display() -> str:
     return datetime.now(APP_TZ).strftime(DATE_FORMAT_DISPLAY)
 
 
+def _configure_telegram_commands(bot: telebot.TeleBot) -> None:
+    """Configure Telegram command list and input menu button."""
+    commands = [
+        BotCommand('start', 'Перезапустить бота'),
+        BotCommand('menu', 'Открыть главное меню'),
+        BotCommand('cancel', 'Отменить текущий ввод'),
+        BotCommand('help', 'Справка'),
+    ]
+    try:
+        bot.set_my_commands(commands)
+    except ApiTelegramException as error:
+        log.warning('Failed to set bot commands: %s', error)
+        return
+
+    if not hasattr(bot, 'set_chat_menu_button'):
+        return
+
+    try:
+        bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except TypeError:
+        # Fallback for wrappers expecting explicit menu button type.
+        try:
+            bot.set_chat_menu_button(menu_button=MenuButtonCommands('commands'))
+        except ApiTelegramException as error:
+            log.warning('Failed to set menu button: %s', error)
+    except ApiTelegramException as error:
+        log.warning('Failed to set menu button: %s', error)
+
+
 def _display_width(value: str) -> int:
     """Calculate visible width for monospaced table rendering."""
     width = 0
@@ -127,6 +156,7 @@ def _format_timetable_table(breakfast: str,
 def build_app(bot: telebot.TeleBot) -> None:
     """Build app."""
     init_db()
+    _configure_telegram_commands(bot)
     states = StateStore()
 
     def send_breakfast(user_id: int) -> None:

@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+import unicodedata
 from datetime import datetime
 
 import telebot
@@ -72,6 +73,55 @@ def _today_iso() -> str:
 def _today_display() -> str:
     """Today display."""
     return datetime.now(APP_TZ).strftime(DATE_FORMAT_DISPLAY)
+
+
+def _display_width(value: str) -> int:
+    """Calculate visible width for monospaced table rendering."""
+    width = 0
+    for ch in value:
+        if unicodedata.combining(ch):
+            continue
+        if unicodedata.category(ch) == 'Cf':
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+    return width
+
+
+def _pad_cell(value: str, width: int) -> str:
+    """Pad a cell to target visible width."""
+    return value + (' ' * max(0, width - _display_width(value)))
+
+
+def _format_timetable_table(breakfast: str,
+                            lunch: str,
+                            dinner: str,
+                            toilet: str) -> str:
+    """Format user timetable as text table for Telegram."""
+    rows = [
+        ('🍳 Завтрак', breakfast),
+        ('🍲 Обед', lunch),
+        ('🍽️ Ужин', dinner),
+        ('🚽 Туалет', toilet),
+    ]
+    normalized_rows = [(name, value or '--:--') for name, value in rows]
+    left_header = 'Событие'
+    right_header = 'Время'
+
+    left_width = max(_display_width(left_header), *(_display_width(name)
+                     for name, _ in normalized_rows))
+    right_width = max(_display_width(right_header), *(_display_width(value)
+                      for _, value in normalized_rows))
+
+    sep = f'+-{"-" * left_width}-+-{"-" * right_width}-+'
+    lines = [
+        sep,
+        f'| {_pad_cell(left_header, left_width)} | {_pad_cell(right_header, right_width)} |',
+        sep,
+    ]
+    for name, value in normalized_rows:
+        lines.append(f'| {_pad_cell(name, left_width)} | {_pad_cell(value, right_width)} |')
+    lines.append(sep)
+    return '<pre>' + '\n'.join(lines) + '</pre>'
 
 
 def build_app(bot: telebot.TeleBot) -> None:
@@ -223,10 +273,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             bt, lt, dt, tt = times
             txt = (
                 '⏰ <b>Твоё расписание:</b>\n'
-                f'Завтрак: {bt}\n'
-                f'Обед:    {lt}\n'
-                f'Ужин:    {dt}\n'
-                f'Туалет:  {tt}\n\n'
+                f'{_format_timetable_table(bt, lt, dt, tt)}\n\n'
                 'Нажми кнопку, чтобы изменить время.'
             )
             _safe_edit_message_text(

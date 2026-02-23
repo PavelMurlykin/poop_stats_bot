@@ -2,8 +2,19 @@ from db.connection import with_db
 
 
 @with_db
-def init_db(cur) -> None:
-    """Initialize database schema."""
+def init_db(cursor) -> None:
+    """
+    Выполняет операцию `init_db` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Args:
+        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
+
+    Returns:
+        Ноне: Возвращаемое значение отсутствует.
+    """
     statements = [
         '''
         CREATE TABLE IF NOT EXISTS users (
@@ -122,4 +133,4 @@ def init_db(cur) -> None:
         'ON notifications_log(user_id, date, type)',
     ]
     for statement in statements:
-        cur.execute(statement)
+        cursor.execute(statement)

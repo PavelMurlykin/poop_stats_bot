@@ -5,7 +5,15 @@ from config import LONG_POLLING_TIMEOUT, POLLING_TIMEOUT
 
 
 def main() -> None:
-    """Запуск бота."""
+    """
+    Выполняет операцию `main` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Returns:
+        Ноне: Возвращаемое значение отсутствует.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s %(levelname)s %(name)s: %(message)s',

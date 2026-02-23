@@ -63,6 +63,18 @@ def init_db(cur) -> None:
         )
         ''',
         '''
+        CREATE TABLE IF NOT EXISTS water (
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            date DATE NOT NULL,
+            glasses_count INTEGER NOT NULL DEFAULT 0 CHECK(glasses_count >= 0),
+            created_at TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP NOT NULL,
+            UNIQUE(user_id, date),
+            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        ''',
+        '''
         CREATE TABLE IF NOT EXISTS notifications_log (
             id BIGSERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL,
@@ -83,6 +95,8 @@ def init_db(cur) -> None:
         'ON stools(user_id, date)',
         'CREATE INDEX IF NOT EXISTS idx_feelings_user_date '
         'ON feelings(user_id, date)',
+        'CREATE INDEX IF NOT EXISTS idx_water_user_date '
+        'ON water(user_id, date)',
         'CREATE INDEX IF NOT EXISTS idx_notif_user_date_type '
         'ON notifications_log(user_id, date, type)',
     ]

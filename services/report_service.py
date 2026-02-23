@@ -9,7 +9,7 @@ from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE
 from db.repositories import fetch_all_for_report
 
 DATE_COLUMN_INDEXES = {1}
-NUMBER_COLUMN_INDEXES = {5, 7, 9, 12}
+NUMBER_COLUMN_INDEXES = {5, 7, 9, 15}
 CENTERED_COLUMN_INDEXES = DATE_COLUMN_INDEXES | NUMBER_COLUMN_INDEXES
 
 DATE_COLUMN_WIDTH = 12
@@ -30,7 +30,10 @@ COLUMN_WIDTHS = {
     9: COUNT_COLUMN_WIDTH,
     10: XL_TEXT_COLUMN_WIDTH,
     11: LONG_TEXT_COLUMN_WIDTH,
-    12: COUNT_COLUMN_WIDTH,
+    12: SHORT_TEXT_COLUMN_WIDTH,
+    13: SHORT_TEXT_COLUMN_WIDTH,
+    14: LONG_TEXT_COLUMN_WIDTH,
+    15: COUNT_COLUMN_WIDTH,
 }
 
 BRISTOL = {
@@ -46,7 +49,6 @@ BRISTOL = {
 
 
 def _to_display(date_value) -> str:
-    """To display."""
     if isinstance(date_value, datetime):
         return date_value.strftime(DATE_FORMAT_DISPLAY)
     if isinstance(date_value, date):
@@ -55,19 +57,13 @@ def _to_display(date_value) -> str:
     return dt.strftime(DATE_FORMAT_DISPLAY)
 
 
-def _apply_worksheet_style(worksheet,
-                           total_rows: int,
-                           total_columns: int
-                           ) -> None:
-    """Apply table style for readability in exported report."""
+def _apply_worksheet_style(worksheet, total_rows: int, total_columns: int) -> None:
     thin = Side(style='thin', color='000000')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     header_font = Font(bold=True)
-    header_alignment = Alignment(
-        horizontal='center', vertical='center', wrap_text=True)
-    text_alignment = Alignment(
-        horizontal='left', vertical='top', wrap_text=True)
+    header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    text_alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
     centered_alignment = Alignment(horizontal='center', vertical='center')
 
     for col_idx, width in COLUMN_WIDTHS.items():
@@ -75,11 +71,12 @@ def _apply_worksheet_style(worksheet,
 
     worksheet.row_dimensions[1].height = 36
 
-    for row in worksheet.iter_rows(min_row=1,
-                                   max_row=total_rows,
-                                   min_col=1,
-                                   max_col=total_columns
-                                   ):
+    for row in worksheet.iter_rows(
+        min_row=1,
+        max_row=total_rows,
+        min_col=1,
+        max_col=total_columns,
+    ):
         for cell in row:
             cell.border = border
             if cell.row == 1:
@@ -92,87 +89,117 @@ def _apply_worksheet_style(worksheet,
 
 
 def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
-    """Generate user report xlsx."""
     data = fetch_all_for_report(user_id)
     meals = data['meals']
     medicines = data['medicines']
     stools = data['stools']
     feelings = data['feelings']
     water = data['water']
+    sleeps = data['sleeps']
 
-    dates = sorted(set(
-        [m['date'] for m in meals] +
-        [m['date'] for m in medicines] +
-        [s['date'] for s in stools] +
-        [f['date'] for f in feelings] +
-        [w['date'] for w in water]
-    ))
+    dates = sorted(
+        set(
+            [m['date'] for m in meals]
+            + [m['date'] for m in medicines]
+            + [s['date'] for s in stools]
+            + [f['date'] for f in feelings]
+            + [w['date'] for w in water]
+            + [s['date'] for s in sleeps]
+        )
+    )
 
     by_date_meals = {}
     by_date_meds = {}
     by_date_stools = {}
     by_date_feelings = {}
     by_date_water = {}
-    for m in meals:
-        by_date_meals.setdefault(m['date'], []).append(m)
-    for m in medicines:
-        by_date_meds.setdefault(m['date'], []).append(m)
-    for s in stools:
-        by_date_stools.setdefault(s['date'], []).append(s)
-    for f in feelings:
-        by_date_feelings.setdefault(f['date'], []).append(f)
-    for w in water:
-        by_date_water[w['date']] = int(w['glasses_count'])
+    by_date_sleep = {}
+
+    for meal in meals:
+        by_date_meals.setdefault(meal['date'], []).append(meal)
+    for medicine in medicines:
+        by_date_meds.setdefault(medicine['date'], []).append(medicine)
+    for stool in stools:
+        by_date_stools.setdefault(stool['date'], []).append(stool)
+    for feeling in feelings:
+        by_date_feelings.setdefault(feeling['date'], []).append(feeling)
+    for water_row in water:
+        by_date_water[water_row['date']] = int(water_row['glasses_count'])
+    for sleep in sleeps:
+        by_date_sleep[sleep['date']] = sleep
 
     rows = []
-    for d in dates:
+    for day in dates:
         breakfast = lunch = dinner = ''
         snacks = []
-        for m in by_date_meals.get(d, []):
-            if m['meal_type'] == 'breakfast':
-                breakfast = m['description']
-            elif m['meal_type'] == 'lunch':
-                lunch = m['description']
-            elif m['meal_type'] == 'dinner':
-                dinner = m['description']
-            elif m['meal_type'] == 'snack':
-                snacks.append(m['description'])
+        for meal in by_date_meals.get(day, []):
+            if meal['meal_type'] == 'breakfast':
+                breakfast = meal['description']
+            elif meal['meal_type'] == 'lunch':
+                lunch = meal['description']
+            elif meal['meal_type'] == 'dinner':
+                dinner = meal['description']
+            elif meal['meal_type'] == 'snack':
+                snacks.append(meal['description'])
 
         meds_list = []
-        for med in by_date_meds.get(d, []):
-            nm = med['name']
-            ds = (med.get('dosage') or '').strip()
-            meds_list.append(f'{nm} ({ds})'.strip())
+        for medicine in by_date_meds.get(day, []):
+            name = medicine['name']
+            dosage = (medicine.get('dosage') or '').strip()
+            meds_list.append(f'{name} ({dosage})' if dosage else name)
 
         stool_list = []
-        for s in by_date_stools.get(d, []):
-            q = int(s['quality'])
-            stool_list.append(f'{q} — {BRISTOL.get(q, 'неизвестно')}')
+        for stool in by_date_stools.get(day, []):
+            quality = int(stool['quality'])
+            stool_list.append(f'{quality} — {BRISTOL.get(quality, "неизвестно")}')
 
-        feeling_list = [f['description'] for f in by_date_feelings.get(d, [])]
+        feeling_list = [f['description'] for f in by_date_feelings.get(day, [])]
 
-        rows.append([
-            _to_display(d),
-            breakfast,
-            lunch,
-            dinner,
-            len(snacks),
-            '; '.join(snacks),
-            len(meds_list),
-            '\n'.join(meds_list),
-            len(stool_list),
-            '\n'.join(stool_list),
-            '\n'.join(feeling_list),
-            by_date_water.get(d, 0),
-        ])
+        sleep_row = by_date_sleep.get(day, {})
+        sleep_wakeup = sleep_row.get('wakeup_time', '')
+        sleep_bed = sleep_row.get('bed_time', '')
+        sleep_quality = sleep_row.get('quality_description') or ''
 
-    df = pd.DataFrame(rows, columns=[
-        'Дата', 'Завтрак', 'Обед', 'Ужин',
-        'Количество перекусов', 'Перекусы',
-        'Количество приемов лекарств', 'Лекарства',
-        'Количество походов в туалет', 'Качество стула',
-        'Самочувствие', 'Стаканов воды'
-    ])
+        rows.append(
+            [
+                _to_display(day),
+                breakfast,
+                lunch,
+                dinner,
+                len(snacks),
+                '; '.join(snacks),
+                len(meds_list),
+                '\n'.join(meds_list),
+                len(stool_list),
+                '\n'.join(stool_list),
+                '\n'.join(feeling_list),
+                sleep_wakeup,
+                sleep_bed,
+                sleep_quality,
+                by_date_water.get(day, 0),
+            ]
+        )
+
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            'Дата',
+            'Завтрак',
+            'Обед',
+            'Ужин',
+            'Количество перекусов',
+            'Перекусы',
+            'Количество приемов лекарств',
+            'Лекарства',
+            'Количество походов в туалет',
+            'Качество стула',
+            'Самочувствие',
+            'Сон: подъем',
+            'Сон: отход ко сну',
+            'Сон: качество',
+            'Стаканов воды',
+        ],
+    )
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:

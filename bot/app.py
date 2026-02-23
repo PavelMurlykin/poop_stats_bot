@@ -97,7 +97,8 @@ def _configure_telegram_commands(bot: telebot.TeleBot) -> None:
     except TypeError:
         # Fallback for wrappers expecting explicit menu button type.
         try:
-            bot.set_chat_menu_button(menu_button=MenuButtonCommands('commands'))
+            bot.set_chat_menu_button(
+                menu_button=MenuButtonCommands('commands'))
         except ApiTelegramException as error:
             log.warning('Failed to set menu button: %s', error)
     except ApiTelegramException as error:
@@ -148,7 +149,8 @@ def _format_timetable_table(breakfast: str,
         sep,
     ]
     for name, value in normalized_rows:
-        lines.append(f'| {_pad_cell(name, left_width)} | {_pad_cell(value, right_width)} |')
+        lines.append(
+            f'| {_pad_cell(name, left_width)} | {_pad_cell(value, right_width)} |')
     lines.append(sep)
     return '<pre>' + '\n'.join(lines) + '</pre>'
 

@@ -154,13 +154,13 @@ def get_all_users(cursor) -> List[Tuple[int, str, str, str, str, str, str]]:
     )
     return [
         (
-            r['user_id'],
-            r['breakfast_time'],
-            r['lunch_time'],
-            r['dinner_time'],
-            r['toilet_time'],
-            r['wakeup_time'],
-            r['bed_time'],
+            row['user_id'],
+            row['breakfast_time'],
+            row['lunch_time'],
+            row['dinner_time'],
+            row['toilet_time'],
+            row['wakeup_time'],
+            row['bed_time'],
         )
         for row in cursor.fetchall()
     ]

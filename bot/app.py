@@ -17,7 +17,8 @@ from config import (APP_TZ, DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE,
                     TELEGRAM_TOKEN)
 from db.repositories import (add_feeling, add_medicine, add_stool,
                              delete_feeling, delete_meal, delete_medicine,
-                             delete_stool, get_user_times,
+                             delete_stool, get_user_times, get_water_for_day,
+                             increment_water,
                              list_feelings_for_day, list_meals_for_day,
                              list_medicines_for_day, list_stools_for_day,
                              register_user, update_feeling, update_meal,
@@ -315,6 +316,18 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'manual', 'feeling_desc', {'date': _today_iso()}))
             return
 
+        if data == 'manual_water':
+            total_glasses = increment_water(user_id, _today_iso())
+            states.clear(user_id)
+            bot.answer_callback_query(call.id, text='✅ Добавлен стакан воды.')
+            _safe_edit_message_text(
+                bot,
+                f'💧 Добавлен стакан воды. Сегодня: {total_glasses}.',
+                user_id,
+                call.message.message_id,
+                reply_markup=manual_menu())
+            return
+
         if data == 'show_today':
             _show_today(bot, user_id, call.message.message_id)
             return
@@ -542,18 +555,19 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
     meds = list_medicines_for_day(user_id, date_iso)
     stools = list_stools_for_day(user_id, date_iso)
     feelings = list_feelings_for_day(user_id, date_iso)
+    water_glasses = get_water_for_day(user_id, date_iso)
 
     lines = [f'<b>Записи за {date_disp}</b>\n']
-    if not meals and not meds and not stools and not feelings:
+    if not meals and not meds and not stools and not feelings and not water_glasses:
         lines.append('За сегодня записей нет.')
     else:
         if meals:
             lines.append('<b>Еда:</b>')
             meal_order = [
-                ('breakfast', 'Завтрак'),
-                ('lunch', 'Обед'),
-                ('dinner', 'Ужин'),
-                ('snack', 'Перекус'),
+                ('breakfast', '🍳 Завтрак'),
+                ('lunch', '🍲 Обед'),
+                ('dinner', '🍽️ Ужин'),
+                ('snack', '🍪 Перекус'),
             ]
             grouped = {meal_type: [] for meal_type, _ in meal_order}
             for meal in meals:
@@ -565,14 +579,14 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
                     meal_id = meal['id']
                     meal_desc = meal['description']
                     lines.append(
-                        f'- <b>{meal_title}</b>: {meal_desc}'
+                        f'<b>{meal_title}</b>: {meal_desc}'
                         f'\n(ред.: /edit_meal_{meal_id})'
                         f'\n(удал.: /delete_meal_{meal_id})'
                         f'\n'
                     )
 
         if meds:
-            lines.append('\n<b>Лекарства:</b>')
+            lines.append('\n💊 <b>Лекарства:</b>')
             for med in meds:
                 med_id = med['id']
                 med_name = med['name']
@@ -586,7 +600,7 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
                 )
 
         if stools:
-            lines.append('\n<b>Туалет:</b>')
+            lines.append('\n🚽 <b>Туалет:</b>')
             for stool in stools:
                 stool_id = stool['id']
                 quality = int(stool['quality'])
@@ -598,8 +612,12 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
                     f'\n'
                 )
 
+        if water_glasses:
+            lines.append('\n💧 <b>Вода:</b>')
+            lines.append(f'- Выпито стаканов: {water_glasses}')
+
         if feelings:
-            lines.append('\n<b>Самочувствие:</b>')
+            lines.append('\n😊 <b>Самочувствие:</b>')
             for feeling in feelings:
                 feeling_id = feeling['id']
                 feeling_desc = feeling['description']

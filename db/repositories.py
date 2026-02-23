@@ -296,6 +296,45 @@ def add_feeling(cur, user_id: int, date_iso: str, description: str) -> None:
 
 
 @with_db
+def increment_water(
+        cur,
+        user_id: int,
+        date_iso: str,
+        glasses_count: int = 1) -> int:
+    """Increment consumed water glasses for day."""
+    now = _utc_now()
+    date_val = _parse_date(date_iso)
+    cur.execute(
+        'INSERT INTO water('
+        'user_id, date, glasses_count, created_at, updated_at'
+        ') VALUES (%s, %s, %s, %s, %s) '
+        'ON CONFLICT(user_id, date) DO UPDATE SET '
+        'glasses_count = water.glasses_count + EXCLUDED.glasses_count, '
+        'updated_at = EXCLUDED.updated_at '
+        'RETURNING glasses_count',
+        (user_id,
+         date_val,
+         glasses_count,
+         now,
+         now))
+    row = cur.fetchone()
+    return int(row['glasses_count']) if row else glasses_count
+
+
+@with_db
+def get_water_for_day(cur, user_id: int, date_iso: str) -> int:
+    """Get consumed water glasses for day."""
+    date_val = _parse_date(date_iso)
+    cur.execute(
+        'SELECT glasses_count FROM water '
+        'WHERE user_id=%s AND date=%s',
+        (user_id, date_val),
+    )
+    row = cur.fetchone()
+    return int(row['glasses_count']) if row else 0
+
+
+@with_db
 def list_feelings_for_day(cur, user_id: int, date_iso: str):
     """List feelings for day."""
     date_val = _parse_date(date_iso)
@@ -360,8 +399,15 @@ def fetch_all_for_report(cur, user_id: int) -> Dict[str, Any]:
         (user_id,),
     )
     feelings = [dict(r) for r in cur.fetchall()]
+    cur.execute(
+        'SELECT date, glasses_count FROM water '
+        'WHERE user_id=%s ORDER BY date',
+        (user_id,),
+    )
+    water = [dict(r) for r in cur.fetchall()]
     return {
         'meals': meals,
         'medicines': medicines,
         'stools': stools,
-        'feelings': feelings}
+        'feelings': feelings,
+        'water': water}

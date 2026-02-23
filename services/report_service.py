@@ -9,7 +9,7 @@ from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE
 from db.repositories import fetch_all_for_report
 
 DATE_COLUMN_INDEXES = {1}
-NUMBER_COLUMN_INDEXES = {5, 7, 9}
+NUMBER_COLUMN_INDEXES = {5, 7, 9, 12}
 CENTERED_COLUMN_INDEXES = DATE_COLUMN_INDEXES | NUMBER_COLUMN_INDEXES
 
 DATE_COLUMN_WIDTH = 12
@@ -30,6 +30,7 @@ COLUMN_WIDTHS = {
     9: COUNT_COLUMN_WIDTH,
     10: XL_TEXT_COLUMN_WIDTH,
     11: LONG_TEXT_COLUMN_WIDTH,
+    12: COUNT_COLUMN_WIDTH,
 }
 
 BRISTOL = {
@@ -97,18 +98,21 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
     medicines = data['medicines']
     stools = data['stools']
     feelings = data['feelings']
+    water = data['water']
 
     dates = sorted(set(
         [m['date'] for m in meals] +
         [m['date'] for m in medicines] +
         [s['date'] for s in stools] +
-        [f['date'] for f in feelings]
+        [f['date'] for f in feelings] +
+        [w['date'] for w in water]
     ))
 
     by_date_meals = {}
     by_date_meds = {}
     by_date_stools = {}
     by_date_feelings = {}
+    by_date_water = {}
     for m in meals:
         by_date_meals.setdefault(m['date'], []).append(m)
     for m in medicines:
@@ -117,6 +121,8 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
         by_date_stools.setdefault(s['date'], []).append(s)
     for f in feelings:
         by_date_feelings.setdefault(f['date'], []).append(f)
+    for w in water:
+        by_date_water[w['date']] = int(w['glasses_count'])
 
     rows = []
     for d in dates:
@@ -157,6 +163,7 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
             len(stool_list),
             '\n'.join(stool_list),
             '\n'.join(feeling_list),
+            by_date_water.get(d, 0),
         ])
 
     df = pd.DataFrame(rows, columns=[
@@ -164,7 +171,7 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
         'Количество перекусов', 'Перекусы',
         'Количество приемов лекарств', 'Лекарства',
         'Количество походов в туалет', 'Качество стула',
-        'Самочувствие'
+        'Самочувствие', 'Стаканов воды'
     ])
 
     output = io.BytesIO()

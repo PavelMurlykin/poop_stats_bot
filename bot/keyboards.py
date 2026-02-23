@@ -47,6 +47,7 @@ def manual_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton('🍲 Обед', callback_data='manual_meal_lunch'),
         InlineKeyboardButton('🍽️ Ужин', callback_data='manual_meal_dinner'),
         InlineKeyboardButton('🍪 Перекус', callback_data='manual_meal_snack'),
+        InlineKeyboardButton('💧 Стакан воды', callback_data='manual_water'),
         InlineKeyboardButton('💊 Лекарство', callback_data='manual_medicine'),
         InlineKeyboardButton('🚽 Туалет', callback_data='manual_stool'),
         InlineKeyboardButton('😊 Самочувствие', callback_data='manual_feeling'),

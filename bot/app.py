@@ -143,6 +143,26 @@ def _today_display() -> str:
     return datetime.now(APP_TZ).strftime(DATE_FORMAT_DISPLAY)
 
 
+def _help_text() -> str:
+    """
+    Формирует краткую инструкцию по использованию бота.
+
+    Returns:
+        str: Текст подсказки для команды `/help` и пункта «Помощь».
+    """
+    return (
+        'ℹ️ <b>Как пользоваться ботом</b>\n'
+        '1. Откройте <b>⏰ Расписание</b> и настройте время напоминаний.\n'
+        '2. Через <b>➕ Добавить событие</b> вносите еду, воду, лекарства, '
+        'туалет, самочувствие и сон.\n'
+        '3. В <b>📋 Дневная статистика</b> смотрите записи за сегодня, '
+        'редактируйте и удаляйте их.\n'
+        '4. <b>📥 Полная статистика</b> выгружает Excel-отчёт за весь период.\n'
+        '5. <b>📊 Бристольская шкала</b> помогает выбрать оценку стула.\n\n'
+        '<b>Команды:</b> /menu — меню, /cancel — отменить текущий ввод.'
+    )
+
+
 def _configure_telegram_commands(bot: telebot.TeleBot) -> None:
     """
     Выполняет операцию `_configure_telegram_commands` в бизнес-логике модуля.
@@ -491,8 +511,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         bot.send_message(
             message.from_user.id,
-            '📋 <b>Команды:</b>\n/menu — меню\n/cancel — отменить ввод\n\n'
-            'Остальные действия доступны через кнопки.',
+            _help_text(),
             reply_markup=back_to_main(),
         )
 
@@ -869,11 +888,7 @@ def build_app(bot: telebot.TeleBot) -> None:
 
         if data == 'help':
             bot.edit_message_text(
-                '📋 <b>Доступно:</b>\n'
-                '• Настройка времени\n'
-                '• Добавление событий\n'
-                '• Просмотр/редактирование/удаление\n'
-                '• Экспорт статистики',
+                _help_text(),
                 user_id,
                 call.message.message_id,
                 reply_markup=back_to_main(),

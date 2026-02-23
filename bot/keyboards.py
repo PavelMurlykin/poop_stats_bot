@@ -2,30 +2,58 @@ from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 def main_menu() -> InlineKeyboardMarkup:
-    """Главное меню."""
-    m = InlineKeyboardMarkup(row_width=2)
-    m.add(
+    """
+    Выполняет операцию `main_menu` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Returns:
+        InlineKeyboardMarkup: Результат выполнения функции.
+    """
+    keyboard_markup = InlineKeyboardMarkup(row_width=2)
+    keyboard_markup.add(
         InlineKeyboardButton('⏰ Расписание', callback_data='show_timetable'),
         InlineKeyboardButton('📊 Бристольская шкала', callback_data='bristol'),
-        InlineKeyboardButton('➕ Добавить событие', callback_data='manual_menu'),
-        InlineKeyboardButton('📋 Дневная статистика', callback_data='show_today'),
-        InlineKeyboardButton('📥 Полная статистика', callback_data='export_all_stats'),
+        InlineKeyboardButton('➕ Добавить событие',
+                             callback_data='manual_menu'),
+        InlineKeyboardButton('📋 Дневная статистика',
+                             callback_data='show_today'),
+        InlineKeyboardButton('📥 Полная статистика',
+                             callback_data='export_all_stats'),
         InlineKeyboardButton('❓ Помощь', callback_data='help'),
     )
-    return m
+    return keyboard_markup
 
 
 def back_to_main() -> InlineKeyboardMarkup:
-    """Кнопка возврата."""
-    m = InlineKeyboardMarkup()
-    m.add(InlineKeyboardButton('◀ Назад', callback_data='back_to_main'))
-    return m
+    """
+    Выполняет операцию `back_to_main` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Returns:
+        InlineKeyboardMarkup: Результат выполнения функции.
+    """
+    keyboard_markup = InlineKeyboardMarkup()
+    keyboard_markup.add(InlineKeyboardButton(
+        '◀ Назад', callback_data='back_to_main'))
+    return keyboard_markup
 
 
 def edit_timetable_menu() -> InlineKeyboardMarkup:
-    """Меню настройки расписания."""
-    m = InlineKeyboardMarkup(row_width=2)
-    m.add(
+    """
+    Выполняет операцию `edit_timetable_menu` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Returns:
+        InlineKeyboardMarkup: Результат выполнения функции.
+    """
+    keyboard_markup = InlineKeyboardMarkup(row_width=2)
+    keyboard_markup.add(
         InlineKeyboardButton('🍳 Завтрак', callback_data='set_time_breakfast'),
         InlineKeyboardButton('🍲 Обед', callback_data='set_time_lunch'),
         InlineKeyboardButton('🍽️ Ужин', callback_data='set_time_dinner'),
@@ -34,14 +62,23 @@ def edit_timetable_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton('🌙 Отход ко сну', callback_data='set_time_bed'),
         InlineKeyboardButton('◀ Назад', callback_data='back_to_main'),
     )
-    return m
+    return keyboard_markup
 
 
 def manual_menu() -> InlineKeyboardMarkup:
-    """Меню ручного добавления событий."""
-    m = InlineKeyboardMarkup(row_width=2)
-    m.add(
-        InlineKeyboardButton('🍳 Завтрак', callback_data='manual_meal_breakfast'),
+    """
+    Выполняет операцию `manual_menu` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Returns:
+        InlineKeyboardMarkup: Результат выполнения функции.
+    """
+    keyboard_markup = InlineKeyboardMarkup(row_width=2)
+    keyboard_markup.add(
+        InlineKeyboardButton(
+            '🍳 Завтрак', callback_data='manual_meal_breakfast'),
         InlineKeyboardButton('🍲 Обед', callback_data='manual_meal_lunch'),
         InlineKeyboardButton('🍽️ Ужин', callback_data='manual_meal_dinner'),
         InlineKeyboardButton('🍪 Перекус', callback_data='manual_meal_snack'),
@@ -49,20 +86,33 @@ def manual_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton('💊 Лекарство', callback_data='manual_medicine'),
         InlineKeyboardButton('🚽 Туалет', callback_data='manual_stool'),
         InlineKeyboardButton('😊 Самочувствие', callback_data='manual_feeling'),
-        InlineKeyboardButton('🛌 Качество сна', callback_data='manual_sleep_quality'),
+        InlineKeyboardButton(
+            '🛌 Качество сна', callback_data='manual_sleep_quality'),
         InlineKeyboardButton('◀ Назад', callback_data='back_to_main'),
     )
-    return m
+    return keyboard_markup
 
 
 def confirm_delete(item_type: str, item_id: int) -> InlineKeyboardMarkup:
-    """Подтверждение удаления."""
-    m = InlineKeyboardMarkup(row_width=2)
-    m.add(
+    """
+    Выполняет операцию `confirm_delete` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Args:
+        item_type: Тип записи, над которой выполняется действие.
+        item_id: Идентификатор записи в базе данных.
+
+    Returns:
+        InlineKeyboardMarkup: Результат выполнения функции.
+    """
+    keyboard_markup = InlineKeyboardMarkup(row_width=2)
+    keyboard_markup.add(
         InlineKeyboardButton(
             '✅ Да, удалить',
             callback_data=f'confirm_delete:{item_type}:{item_id}',
         ),
         InlineKeyboardButton('❌ Нет', callback_data='cancel_delete'),
     )
-    return m
+    return keyboard_markup

@@ -49,21 +49,53 @@ BRISTOL = {
 
 
 def _to_display(date_value) -> str:
+    """
+    Выполняет операцию `_to_display` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Args:
+        date_value: Параметр `date_value` для текущего шага обработки.
+
+    Returns:
+        str: Результат выполнения функции.
+    """
     if isinstance(date_value, datetime):
         return date_value.strftime(DATE_FORMAT_DISPLAY)
     if isinstance(date_value, date):
         return date_value.strftime(DATE_FORMAT_DISPLAY)
-    dt = datetime.strptime(str(date_value), DATE_FORMAT_STORAGE)
-    return dt.strftime(DATE_FORMAT_DISPLAY)
+    parsed_datetime = datetime.strptime(str(date_value), DATE_FORMAT_STORAGE)
+    return parsed_datetime.strftime(DATE_FORMAT_DISPLAY)
 
 
-def _apply_worksheet_style(worksheet, total_rows: int, total_columns: int) -> None:
+def _apply_worksheet_style(
+    worksheet,
+    total_rows: int,
+    total_columns: int,
+) -> None:
+    """
+    Выполняет операцию `_apply_worksheet_style` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Args:
+        worksheet: Параметр `worksheet` для текущего шага обработки.
+        total_rows: Параметр `total_rows` для текущего шага обработки.
+        total_columns: Параметр `total_columns` для текущего шага обработки.
+
+    Returns:
+        Ноне: Возвращаемое значение отсутствует.
+    """
     thin = Side(style='thin', color='000000')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     header_font = Font(bold=True)
-    header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    text_alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+    header_alignment = Alignment(
+        horizontal='center', vertical='center', wrap_text=True)
+    text_alignment = Alignment(
+        horizontal='left', vertical='top', wrap_text=True)
     centered_alignment = Alignment(horizontal='center', vertical='center')
 
     for col_idx, width in COLUMN_WIDTHS.items():
@@ -89,6 +121,18 @@ def _apply_worksheet_style(worksheet, total_rows: int, total_columns: int) -> No
 
 
 def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
+    """
+    Выполняет операцию `generate_user_report_xlsx` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Args:
+        user_id: Идентификатор пользователя в Telegram.
+
+    Returns:
+        io.BytesIO: Результат выполнения функции.
+    """
     data = fetch_all_for_report(user_id)
     meals = data['meals']
     medicines = data['medicines']
@@ -99,12 +143,12 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
 
     dates = sorted(
         set(
-            [m['date'] for m in meals]
-            + [m['date'] for m in medicines]
-            + [s['date'] for s in stools]
-            + [f['date'] for f in feelings]
-            + [w['date'] for w in water]
-            + [s['date'] for s in sleeps]
+            [meal['date'] for meal in meals]
+            + [medicine['date'] for medicine in medicines]
+            + [stool['date'] for stool in stools]
+            + [feeling['date'] for feeling in feelings]
+            + [water_row['date'] for water_row in water]
+            + [sleep_row['date'] for sleep_row in sleeps]
         )
     )
 
@@ -151,9 +195,13 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
         stool_list = []
         for stool in by_date_stools.get(day, []):
             quality = int(stool['quality'])
-            stool_list.append(f'{quality} — {BRISTOL.get(quality, "неизвестно")}')
+            stool_list.append(
+                f'{quality} — {BRISTOL.get(quality, "неизвестно")}')
 
-        feeling_list = [f['description'] for f in by_date_feelings.get(day, [])]
+        feeling_list = [
+            feeling['description']
+            for feeling in by_date_feelings.get(day, [])
+        ]
 
         sleep_row = by_date_sleep.get(day, {})
         sleep_wakeup = sleep_row.get('wakeup_time', '')
@@ -180,7 +228,7 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
             ]
         )
 
-    df = pd.DataFrame(
+    report_dataframe = pd.DataFrame(
         rows,
         columns=[
             'Дата',
@@ -203,12 +251,12 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Статистика')
+        report_dataframe.to_excel(writer, index=False, sheet_name='Статистика')
         worksheet = writer.sheets['Статистика']
         _apply_worksheet_style(
             worksheet,
-            total_rows=len(df.index) + 1,
-            total_columns=len(df.columns),
+            total_rows=len(report_dataframe.index) + 1,
+            total_columns=len(report_dataframe.columns),
         )
     output.seek(0)
     return output

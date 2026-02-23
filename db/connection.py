@@ -6,6 +6,15 @@ from config import (DATABASE_URL, PG_CONNECT_TIMEOUT, PG_DB, PG_HOST,
 
 
 def get_connection() -> psycopg.Connection:
+    """
+    Выполняет операцию `get_connection` в бизнес-логике модуля.
+
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Returns:
+        psycopg.Connection: Результат выполнения функции.
+    """
     if DATABASE_URL:
         return psycopg.connect(
             DATABASE_URL,
@@ -23,23 +32,43 @@ def get_connection() -> psycopg.Connection:
     )
 
 
-def with_db(fn):
+def with_db(function_to_wrap):
     """
-    Декторатор для работы с SQL.
+    Выполняет операцию `with_db` в бизнес-логике модуля.
 
-    - Открывает и закрывает соединения.
-    - Выполняет commit и rollback транзакций.
+    Функция используется внутри приложения и поддерживает контракт между
+    компонентами.
+
+    Args:
+        function_to_wrap: Параметр `function_to_wrap` для текущего шага
+                          обработки.
+
+    Returns:
+        Ноне: Возвращаемое значение отсутствует.
     """
     def wrapper(*args, **kwargs):
-        conn = get_connection()
+        """
+        Выполняет операцию `wrapper` в бизнес-логике модуля.
+
+        Функция используется внутри приложения и поддерживает контракт между
+        компонентами.
+
+        Args:
+            args: Параметр `args` для текущего шага обработки.
+            kwargs: Параметр `kwargs` для текущего шага обработки.
+
+        Returns:
+            Ноне: Возвращаемое значение отсутствует.
+        """
+        connection = get_connection()
         try:
-            cur = conn.cursor()
-            res = fn(cur, *args, **kwargs)
-            conn.commit()
-            return res
+            cursor = connection.cursor()
+            result = function_to_wrap(cursor, *args, **kwargs)
+            connection.commit()
+            return result
         except Exception:
-            conn.rollback()
+            connection.rollback()
             raise
         finally:
-            conn.close()
+            connection.close()
     return wrapper

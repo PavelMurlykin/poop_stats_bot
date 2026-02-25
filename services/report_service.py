@@ -8,7 +8,7 @@ from openpyxl.utils import get_column_letter
 from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE
 from db.repositories import fetch_all_for_report
 
-DATE_COLUMN_INDEXES = {1}
+DATE_COLUMN_INDEXES = {1, 12, 13}
 NUMBER_COLUMN_INDEXES = {5, 7, 9, 15}
 CENTERED_COLUMN_INDEXES = DATE_COLUMN_INDEXES | NUMBER_COLUMN_INDEXES
 
@@ -24,14 +24,14 @@ COLUMN_WIDTHS = {
     3: SHORT_TEXT_COLUMN_WIDTH,
     4: SHORT_TEXT_COLUMN_WIDTH,
     5: COUNT_COLUMN_WIDTH,
-    6: LONG_TEXT_COLUMN_WIDTH,
+    6: SHORT_TEXT_COLUMN_WIDTH,
     7: COUNT_COLUMN_WIDTH,
     8: LONG_TEXT_COLUMN_WIDTH,
     9: COUNT_COLUMN_WIDTH,
     10: XL_TEXT_COLUMN_WIDTH,
     11: LONG_TEXT_COLUMN_WIDTH,
-    12: SHORT_TEXT_COLUMN_WIDTH,
-    13: SHORT_TEXT_COLUMN_WIDTH,
+    12: DATE_COLUMN_WIDTH,
+    13: DATE_COLUMN_WIDTH,
     14: LONG_TEXT_COLUMN_WIDTH,
     15: COUNT_COLUMN_WIDTH,
 }
@@ -102,6 +102,7 @@ def _apply_worksheet_style(
         worksheet.column_dimensions[get_column_letter(col_idx)].width = width
 
     worksheet.row_dimensions[1].height = 36
+    worksheet.freeze_panes = 'A2'
 
     for row in worksheet.iter_rows(
         min_row=1,
@@ -193,8 +194,11 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
             meds_list.append(f'{name} ({dosage})' if dosage else name)
 
         stool_list = []
+        stool_count = 0
         for stool in by_date_stools.get(day, []):
             quality = int(stool['quality'])
+            if quality != 0:
+                stool_count += 1
             stool_list.append(
                 f'{quality} — {BRISTOL.get(quality, "неизвестно")}')
 
@@ -218,7 +222,7 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
                 '; '.join(snacks),
                 len(meds_list),
                 '\n'.join(meds_list),
-                len(stool_list),
+                stool_count,
                 '\n'.join(stool_list),
                 '\n'.join(feeling_list),
                 sleep_wakeup,
@@ -242,9 +246,9 @@ def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
             'Количество походов в туалет',
             'Качество стула',
             'Самочувствие',
-            'Сон: подъем',
-            'Сон: отход ко сну',
-            'Сон: качество',
+            'Подъем',
+            'Отход ко сну',
+            'Качество сна',
             'Стаканов воды',
         ],
     )

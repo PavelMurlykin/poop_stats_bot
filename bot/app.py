@@ -67,72 +67,31 @@ def create_bot() -> telebot.TeleBot:
     return telebot.TeleBot(TELEGRAM_TOKEN, parse_mode='HTML')
 
 
-def _safe_edit_message_text(
+def _safe_delete_message(
     bot: telebot.TeleBot,
-    text: str,
     chat_id: int,
     message_id: int,
-    reply_markup=None,
 ) -> None:
-    """
-    Выполняет операцию `_safe_edit_message_text` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Удаляет сообщение Telegram и игнорирует ожидаемые ошибки API.
 
     Args:
-        bot: Экземпляр Telegram-бота для отправки и редактирования сообщений.
-        text: Параметр `text` для текущего шага обработки.
+        bot: Экземпляр Telegram-бота для вызова метода удаления.
         chat_id: Идентификатор чата в Telegram.
-        message_id: Идентификатор сообщения в Telegram.
-        reply_markup: Объект разметки для ответа бота.
+        message_id: Идентификатор удаляемого сообщения.
 
     Returns:
         None: Возвращаемое значение отсутствует.
     """
     try:
-        bot.edit_message_text(
-            text,
-            chat_id,
-            message_id,
-            reply_markup=reply_markup,
-        )
+        bot.delete_message(chat_id, message_id)
     except ApiTelegramException as error:
-        if 'message is not modified' in str(error).lower():
-            return
-        raise
-
-
-def _safe_edit_message_reply_markup(
-    bot: telebot.TeleBot,
-    chat_id: int,
-    message_id: int,
-    reply_markup=None,
-) -> None:
-    """
-    Выполняет операцию `_safe_edit_message_reply_markup` в бизнес-логике
-    модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
-
-    Args:
-        bot: Экземпляр Telegram-бота для отправки и редактирования сообщений.
-        chat_id: Идентификатор чата в Telegram.
-        message_id: Идентификатор сообщения в Telegram.
-        reply_markup: Объект разметки для ответа бота.
-
-    Returns:
-        None: Возвращаемое значение отсутствует.
-    """
-    try:
-        bot.edit_message_reply_markup(
-            chat_id,
-            message_id,
-            reply_markup=reply_markup,
+        error_text = str(error).lower()
+        ignored_errors = (
+            'message to delete not found',
+            'message can\'t be deleted',
+            'message identifier is not specified',
         )
-    except ApiTelegramException as error:
-        if 'message is not modified' in str(error).lower():
+        if any(pattern in error_text for pattern in ignored_errors):
             return
         raise
 
@@ -406,6 +365,120 @@ def build_app(bot: telebot.TeleBot) -> None:
     _configure_telegram_commands(bot)
     states = StateStore()
     stats_context: dict[int, dict[str, int | str]] = {}
+    ui_messages: dict[int, int] = {}
+
+    def _set_ui_message(user_id: int, message_id: int) -> None:
+        """Запоминает последнее сообщение бота для пользователя.
+
+        Args:
+            user_id: Идентификатор пользователя Telegram.
+            message_id: Идентификатор отправленного сообщения бота.
+        """
+        ui_messages[user_id] = message_id
+
+    def _get_ui_message(user_id: int) -> int | None:
+        """Возвращает последнее сообщение бота для пользователя.
+
+        Args:
+            user_id: Идентификатор пользователя Telegram.
+
+        Returns:
+            int | None: Идентификатор сообщения или `None`.
+        """
+        return ui_messages.get(user_id)
+
+    def _clear_ui_message(user_id: int) -> None:
+        """Очищает сохраненный идентификатор последнего сообщения бота.
+
+        Args:
+            user_id: Идентификатор пользователя Telegram.
+        """
+        ui_messages.pop(user_id, None)
+
+    def _send_fresh_message(
+        user_id: int,
+        text: str,
+        reply_markup=None,
+        replace_message_id: int | None = None,
+    ) -> int:
+        """Удаляет старое сообщение бота и отправляет новое.
+
+        Args:
+            user_id: Идентификатор пользователя Telegram.
+            text: Текст нового сообщения.
+            reply_markup: Inline-клавиатура нового сообщения.
+            replace_message_id: Явный `message_id` для удаления.
+
+        Returns:
+            int: Идентификатор нового сообщения.
+        """
+        message_ids_to_remove: list[int] = []
+        if replace_message_id is not None:
+            message_ids_to_remove.append(replace_message_id)
+
+        tracked_message_id = _get_ui_message(user_id)
+        if (
+            tracked_message_id is not None
+            and tracked_message_id not in message_ids_to_remove
+        ):
+            message_ids_to_remove.append(tracked_message_id)
+
+        for target_message_id in message_ids_to_remove:
+            _safe_delete_message(bot, user_id, target_message_id)
+        _clear_ui_message(user_id)
+
+        sent_message = bot.send_message(
+            user_id,
+            text,
+            reply_markup=reply_markup,
+        )
+        _set_ui_message(user_id, sent_message.message_id)
+        return sent_message.message_id
+
+    def _replace_message_fresh(
+        user_id: int,
+        message_id: int,
+        text: str,
+        reply_markup=None,
+    ) -> int:
+        """Заменяет сообщение бота новым сообщением в чате.
+
+        Args:
+            user_id: Идентификатор пользователя Telegram.
+            message_id: Идентификатор удаляемого сообщения.
+            text: Текст нового сообщения.
+            reply_markup: Inline-клавиатура нового сообщения.
+
+        Returns:
+            int: Идентификатор нового сообщения.
+        """
+        return _send_fresh_message(
+            user_id,
+            text,
+            reply_markup=reply_markup,
+            replace_message_id=message_id,
+        )
+
+    def _reply_fresh(
+        message: Message,
+        text: str,
+        reply_markup=None,
+    ) -> int:
+        """Отправляет «чистый» ответ бота пользователю.
+
+        Args:
+            message: Пользовательское сообщение-источник.
+            text: Текст ответа бота.
+            reply_markup: Inline-клавиатура нового сообщения.
+
+        Returns:
+            int: Идентификатор нового сообщения.
+        """
+        return _send_fresh_message(
+            message.from_user.id,
+            text,
+            reply_markup=reply_markup,
+        )
 
     def _set_stats_context(
         user_id: int,
@@ -433,21 +506,36 @@ def build_app(bot: telebot.TeleBot) -> None:
         message_id: int,
         user_id: int,
         date_iso: str | None = None,
+        status_text: str | None = None,
     ) -> None:
         normalized_date = date_iso or _today_iso()
-        _set_stats_context(user_id, message_id, normalized_date)
-        _show_today(bot, user_id, message_id, normalized_date)
+        new_message_id = _show_today(
+            bot,
+            user_id,
+            message_id,
+            normalized_date,
+            status_text=status_text,
+        )
+        _set_stats_context(user_id, new_message_id, normalized_date)
+        _set_ui_message(user_id, new_message_id)
 
-    def _refresh_stats_context(user_id: int) -> bool:
+    def _refresh_stats_context(
+        user_id: int,
+        status_text: str | None = None,
+    ) -> bool:
         context = _get_stats_context(user_id)
         if not context:
             return False
-        _show_today(
+        date_iso = str(context['date'])
+        new_message_id = _show_today(
             bot,
             user_id,
             int(context['message_id']),
-            str(context['date']),
+            date_iso,
+            status_text=status_text,
         )
+        _set_stats_context(user_id, new_message_id, date_iso)
+        _set_ui_message(user_id, new_message_id)
         return True
 
     def _reply_after_change(
@@ -455,10 +543,12 @@ def build_app(bot: telebot.TeleBot) -> None:
         text: str,
         return_to_stats: bool,
     ) -> None:
-        if return_to_stats and _refresh_stats_context(message.from_user.id):
-            bot.reply_to(message, text)
+        if return_to_stats and _refresh_stats_context(
+            message.from_user.id,
+            status_text=text,
+        ):
             return
-        bot.reply_to(message, text, reply_markup=main_menu())
+        _reply_fresh(message, text, reply_markup=main_menu())
 
     def _stats_date_for_interaction(
         user_id: int,
@@ -575,7 +665,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             meal_type: Тип приёма пищи (`breakfast`, `lunch`, `dinner`).
             question: Текст вопроса для пользователя.
         """
-        bot.send_message(
+        _send_fresh_message(
             user_id,
             question,
             reply_markup=back_to_main(),
@@ -645,7 +735,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             None: Возвращаемое значение отсутствует.
         """
-        bot.send_message(
+        _send_fresh_message(
             user_id,
             _bristol_scale_prompt(),
             reply_markup=back_to_main(),
@@ -671,7 +761,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             None: Возвращаемое значение отсутствует.
         """
         ensure_sleep_for_day(user_id, _today_iso())
-        bot.send_message(
+        _send_fresh_message(
             user_id,
             '🛌 Как вы оцениваете качество сна этой ночью?',
             reply_markup=back_to_main(),
@@ -701,7 +791,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         _clear_stats_context(user_id)
         register_user(user_id)
         ensure_sleep_for_day(user_id, _today_iso())
-        bot.send_message(
+        _send_fresh_message(
             user_id,
             (
                 '👋 Привет! Бот помогает вести дневник питания, '
@@ -727,8 +817,11 @@ def build_app(bot: telebot.TeleBot) -> None:
             None: Возвращаемое значение отсутствует.
         """
         _clear_stats_context(message.from_user.id)
-        bot.send_message(message.from_user.id, 'Главное меню:',
-                         reply_markup=main_menu())
+        _send_fresh_message(
+            message.from_user.id,
+            'Главное меню:',
+            reply_markup=main_menu(),
+        )
 
     @bot.message_handler(commands=['cancel'])
     def cmd_cancel(message: Message):
@@ -746,8 +839,11 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         states.clear(message.from_user.id)
         _clear_stats_context(message.from_user.id)
-        bot.send_message(message.from_user.id,
-                         '✅ Ожидание отменено.', reply_markup=main_menu())
+        _send_fresh_message(
+            message.from_user.id,
+            '✅ Ожидание отменено.',
+            reply_markup=main_menu(),
+        )
 
     @bot.message_handler(commands=['help'])
     def cmd_help(message: Message):
@@ -763,7 +859,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             None: Возвращаемое значение отсутствует.
         """
-        bot.send_message(
+        _send_fresh_message(
             message.from_user.id,
             _help_text(),
             reply_markup=back_to_main(),
@@ -799,7 +895,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(message, 'Введите новое описание:')
+        _reply_fresh(message, 'Введите новое описание:')
 
     @bot.message_handler(regexp=EDIT_MED_PATTERN)
     def edit_med_cmd(message: Message):
@@ -831,7 +927,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(message, 'Введите новое название:')
+        _reply_fresh(message, 'Введите новое название:')
 
     @bot.message_handler(regexp=EDIT_STOOL_PATTERN)
     def edit_stool_cmd(message: Message):
@@ -863,7 +959,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(message, _bristol_scale_prompt())
+        _reply_fresh(message, _bristol_scale_prompt())
 
     @bot.message_handler(regexp=EDIT_FEELING_PATTERN)
     def edit_feeling_cmd(message: Message):
@@ -895,7 +991,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(message, 'Введите новое описание:')
+        _reply_fresh(message, 'Введите новое описание:')
 
     @bot.message_handler(regexp=EDIT_WATER_PATTERN)
     def edit_water_cmd(message: Message):
@@ -922,7 +1018,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(
+        _reply_fresh(
             message,
             (
                 'Введите количество стаканов воды за '
@@ -956,7 +1052,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(
+        _reply_fresh(
             message,
             (
                 'Введите время подъема за '
@@ -990,7 +1086,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(
+        _reply_fresh(
             message,
             (
                 'Введите время отхода ко сну за '
@@ -1024,7 +1120,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        bot.reply_to(
+        _reply_fresh(
             message,
             f'Введите описание качества сна за {_display_date(date_iso)}:',
         )
@@ -1050,7 +1146,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             _date_from_command_token(match.group(3))
             or _stats_date_for_interaction(message.from_user.id)
         )
-        bot.send_message(
+        _send_fresh_message(
             message.from_user.id,
             '❓ Вы уверены, что хотите удалить эту запись?',
             reply_markup=confirm_delete(item_type, item_id, date_iso),
@@ -1075,11 +1171,10 @@ def build_app(bot: telebot.TeleBot) -> None:
 
         if data == 'back_to_main':
             _clear_stats_context(user_id)
-            _safe_edit_message_text(
-                bot,
-                'Главное меню:',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                'Главное меню:',
                 reply_markup=main_menu(),
             )
             states.clear(user_id)
@@ -1088,11 +1183,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         if data == 'show_timetable':
             times = get_user_times(user_id)
             if not times:
-                _safe_edit_message_text(
-                    bot,
-                    '❌ Вы не зарегистрированы. Напишите /start',
+                _replace_message_fresh(
                     user_id,
                     call.message.message_id,
+                    '❌ Вы не зарегистрированы. Напишите /start',
                     reply_markup=back_to_main(),
                 )
                 return
@@ -1109,11 +1203,10 @@ def build_app(bot: telebot.TeleBot) -> None:
                 )}\n\n'
                 'Нажмите кнопку, чтобы изменить время.'
             )
-            _safe_edit_message_text(
-                bot,
-                text,
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                text,
                 reply_markup=edit_timetable_menu(),
             )
             return
@@ -1138,25 +1231,25 @@ def build_app(bot: telebot.TeleBot) -> None:
             }
             slot_name = names.get(slot, slot)
             example_time = examples.get(slot, '08:00')
-            bot.send_message(
+            prompt_text = (
+                f'Введите время <b>{slot_name}</b> в формате ЧЧ:ММ '
+                f'(например, {example_time}):'
+            )
+            _replace_message_fresh(
                 user_id,
-                (
-                    f'Введите время <b>{slot_name}</b> в формате ЧЧ:ММ '
-                    f'(например, {example_time}):'
-                ),
+                call.message.message_id,
+                prompt_text,
             )
             _set_state(user_id, 'awaiting_time', 'time', {'slot': slot})
-            _safe_edit_message_reply_markup(
-                bot, user_id, call.message.message_id, reply_markup=None)
             return
 
         if data == 'manual_menu':
             if not _stats_context_matches(user_id, call.message.message_id):
                 _clear_stats_context(user_id)
-            bot.edit_message_text(
-                '➕ Добавить событие: выберите тип записи',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                '➕ Добавить событие: выберите тип записи',
                 reply_markup=manual_menu(),
             )
             return
@@ -1172,10 +1265,10 @@ def build_app(bot: telebot.TeleBot) -> None:
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
             meal_name = meal_names.get(meal_type, 'приема пищи')
-            bot.edit_message_text(
-                f'🍽️ Введите описание {meal_name}:',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                f'🍽️ Введите описание {meal_name}:',
             )
             _set_state(
                 user_id,
@@ -1195,10 +1288,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         if data == 'manual_medicine':
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
-            bot.edit_message_text(
-                '💊 Введите название лекарства:',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                '💊 Введите название лекарства:',
             )
             _set_state(
                 user_id,
@@ -1217,10 +1310,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         if data == 'manual_stool':
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
-            bot.edit_message_text(
-                _bristol_scale_prompt(),
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                _bristol_scale_prompt(),
             )
             _set_state(
                 user_id,
@@ -1239,10 +1332,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         if data == 'manual_feeling':
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
-            bot.edit_message_text(
-                '😊 Опишите ваше самочувствие:',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                '😊 Опишите ваше самочувствие:',
             )
             _set_state(
                 user_id,
@@ -1262,10 +1355,10 @@ def build_app(bot: telebot.TeleBot) -> None:
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
             ensure_sleep_for_day(user_id, target_date)
-            bot.edit_message_text(
-                '🌅 Введите фактическое время подъема (ЧЧ:ММ):',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                '🌅 Введите фактическое время подъема (ЧЧ:ММ):',
             )
             _set_state(
                 user_id,
@@ -1285,10 +1378,10 @@ def build_app(bot: telebot.TeleBot) -> None:
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
             ensure_sleep_for_day(user_id, target_date)
-            bot.edit_message_text(
-                '🌙 Введите фактическое время отхода ко сну (ЧЧ:ММ):',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                '🌙 Введите фактическое время отхода ко сну (ЧЧ:ММ):',
             )
             _set_state(
                 user_id,
@@ -1308,8 +1401,11 @@ def build_app(bot: telebot.TeleBot) -> None:
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
             ensure_sleep_for_day(user_id, target_date)
-            bot.edit_message_text('🛌 Опишите качество сна:',
-                                  user_id, call.message.message_id)
+            _replace_message_fresh(
+                user_id,
+                call.message.message_id,
+                '🛌 Опишите качество сна:',
+            )
             _set_state(
                 user_id,
                 'manual',
@@ -1333,11 +1429,10 @@ def build_app(bot: telebot.TeleBot) -> None:
             if _stats_context_matches(user_id, call.message.message_id):
                 _show_stats(call.message.message_id, user_id, target_date)
             else:
-                _safe_edit_message_text(
-                    bot,
-                    f'💧 Добавлен стакан воды. Сегодня: {total_glasses}.',
+                _replace_message_fresh(
                     user_id,
                     call.message.message_id,
+                    f'💧 Добавлен стакан воды. Сегодня: {total_glasses}.',
                     reply_markup=manual_menu(),
                 )
             return
@@ -1347,29 +1442,28 @@ def build_app(bot: telebot.TeleBot) -> None:
             return
 
         if data == 'show_stats_by_date':
-            _safe_edit_message_text(
-                bot,
+            new_message_id = _replace_message_fresh(
+                user_id,
+                call.message.message_id,
                 (
                     '🗓 Введите дату в формате ДД.ММ.ГГГГ, '
                     'за которую нужна статистика:'
                 ),
-                user_id,
-                call.message.message_id,
                 reply_markup=back_to_main(),
             )
             _set_state(
                 user_id,
                 'pending_question',
                 'stats_date',
-                {'message_id': call.message.message_id},
+                {'message_id': new_message_id},
             )
             return
 
         if data == 'help':
-            bot.edit_message_text(
-                _help_text(),
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                _help_text(),
                 reply_markup=back_to_main(),
             )
             return
@@ -1378,19 +1472,19 @@ def build_app(bot: telebot.TeleBot) -> None:
             text = '📊 <b>Бристольская шкала:</b>\n' + '\n'.join(
                 [f'{key} — {BRISTOL[key]}' for key in range(0, 8)]
             )
-            bot.edit_message_text(
-                text,
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                text,
                 reply_markup=back_to_main(),
             )
             return
 
         if data == 'cancel_delete':
-            bot.edit_message_text(
-                'Удаление отменено.',
+            _replace_message_fresh(
                 user_id,
                 call.message.message_id,
+                'Удаление отменено.',
                 reply_markup=back_to_main(),
             )
             return
@@ -1417,6 +1511,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                     if is_successful
                     else 'Не найдено / нет прав'
                 ))
+            status_text = (
+                '✅ Запись удалена.'
+                if is_successful
+                else '❌ Не найдено / нет прав.'
+            )
             context = _get_stats_context(user_id)
             if date_iso and context:
                 _set_stats_context(
@@ -1424,13 +1523,18 @@ def build_app(bot: telebot.TeleBot) -> None:
                     int(context['message_id']),
                     date_iso,
                 )
-            if not _refresh_stats_context(user_id):
-                _show_today(bot, user_id, call.message.message_id, date_iso)
+            if not _refresh_stats_context(user_id, status_text=status_text):
+                _show_stats(
+                    call.message.message_id,
+                    user_id,
+                    date_iso,
+                    status_text=status_text,
+                )
             return
 
         if data == 'export_all_stats':
             bot.answer_callback_query(call.id, text='Формирую отчёт…')
-            bot.send_message(
+            _send_fresh_message(
                 user_id,
                 '🔄 Формирую отчёт. Это может занять некоторое время.',
             )
@@ -1459,7 +1563,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         state = states.get(user_id)
 
         if not state:
-            bot.reply_to(
+            _reply_fresh(
                 message,
                 'Я не ожидаю ввод. Используйте /menu.',
                 reply_markup=main_menu(),
@@ -1489,7 +1593,10 @@ def build_app(bot: telebot.TeleBot) -> None:
                     name = validate_text(text)
                     state.step = 'med_dosage'
                     state.data['name'] = name
-                    bot.reply_to(message, 'Введите новую дозировку (или "-"):')
+                    _reply_fresh(
+                        message,
+                        'Введите новую дозировку (или "-"):',
+                    )
                     return
 
                 if state.step == 'med_dosage':
@@ -1595,12 +1702,12 @@ def build_app(bot: telebot.TeleBot) -> None:
                     return
 
             except ValueError as error:
-                bot.reply_to(message, f'❌ {error}')
+                _reply_fresh(message, f'❌ {error}')
                 return
 
         if state.kind == 'awaiting_time':
             if not validate_time_hhmm(text):
-                bot.reply_to(
+                _reply_fresh(
                     message,
                     '❌ Неверный формат. Введите время ЧЧ:ММ.',
                     reply_markup=main_menu(),
@@ -1614,7 +1721,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             if is_successful and slot == 'bed':
                 upsert_sleep_times(user_id, _today_iso(), bed_time=text)
 
-            bot.reply_to(
+            _reply_fresh(
                 message,
                 (
                     '✅ Время сохранено.'
@@ -1648,7 +1755,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     name = validate_text(text)
                     state.step = 'med_dosage'
                     state.data['name'] = name
-                    bot.reply_to(
+                    _reply_fresh(
                         message,
                         (
                             'Введите дозировку (или "-" '
@@ -1737,7 +1844,11 @@ def build_app(bot: telebot.TeleBot) -> None:
             if state.kind == 'pending_question':
                 if state.step == 'stats_date':
                     date_iso = validate_date_display(text)
-                    _show_stats(state.data['message_id'], user_id, date_iso)
+                    _show_stats(
+                        int(state.data['message_id']),
+                        user_id,
+                        date_iso,
+                    )
                     states.clear(user_id)
                     return
 
@@ -1749,7 +1860,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                         state.data['meal_type'],
                         desc,
                     )
-                    bot.reply_to(
+                    _reply_fresh(
                         message,
                         _record_save_message('Добавлена', state),
                         reply_markup=main_menu(),
@@ -1760,7 +1871,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 if state.step == 'stool':
                     quality = validate_stool_quality(text)
                     add_stool(user_id, state.data['date'], quality)
-                    bot.reply_to(
+                    _reply_fresh(
                         message,
                         _record_save_message('Добавлена', state),
                         reply_markup=main_menu(),
@@ -1771,7 +1882,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 if state.step == 'sleep_quality':
                     desc = validate_text(text)
                     upsert_sleep_quality(user_id, state.data['date'], desc)
-                    bot.reply_to(
+                    _reply_fresh(
                         message,
                         _record_save_message('Добавлена', state),
                         reply_markup=main_menu(),
@@ -1779,7 +1890,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     states.clear(user_id)
                     return
         except ValueError as error:
-            bot.reply_to(message, f'❌ {error}')
+            _reply_fresh(message, f'❌ {error}')
             return
 
     thread = threading.Thread(
@@ -1796,7 +1907,8 @@ def _show_today(
     user_id: int,
     message_id: int,
     date_iso: str | None = None,
-) -> None:
+    status_text: str | None = None,
+) -> int:
     """
     Выполняет операцию `_show_today` в бизнес-логике модуля.
 
@@ -1808,9 +1920,10 @@ def _show_today(
         user_id: Идентификатор пользователя в Telegram.
         message_id: Идентификатор сообщения в Telegram.
         date_iso: Дата статистики в формате хранения. По умолчанию сегодня.
+        status_text: Дополнительный статус перед содержимым статистики.
 
     Returns:
-        None: Возвращаемое значение отсутствует.
+        int: Идентификатор нового сообщения со статистикой.
     """
     date_iso = date_iso or _today_iso()
     date_display = _display_date(date_iso)
@@ -1828,7 +1941,10 @@ def _show_today(
     feelings = list_feelings_for_day(user_id, date_iso)
     water_glasses = get_water_for_day(user_id, date_iso)
 
-    lines = [f'<b>Записи за {date_display}</b>\n']
+    lines: list[str] = []
+    if status_text:
+        lines.append(status_text)
+    lines.append(f'<b>Записи за {date_display}</b>\n')
 
     if meals:
         lines.append('<b>Еда:</b>')
@@ -1850,7 +1966,8 @@ def _show_today(
                 lines.append(
                     f'<b>{meal_title}</b>: {meal_desc}'
                     f'\n(ред.: /edit_meal_{meal_id}{dated_command_suffix})'
-                    f'\n(удал.: /delete_meal_{meal_id})\n'
+                    f'\n(удал.: /delete_meal_{meal_id}'
+                    f'{dated_command_suffix})\n'
                 )
 
     if medicines:
@@ -1863,7 +1980,8 @@ def _show_today(
             lines.append(
                 f'- {medicine_name}{tail}'
                 f'\n(ред.: /edit_med_{medicine_id}{dated_command_suffix})'
-                f'\n(удал.: /delete_med_{medicine_id})\n'
+                f'\n(удал.: /delete_med_{medicine_id}'
+                f'{dated_command_suffix})\n'
             )
 
     if stools:
@@ -1875,7 +1993,8 @@ def _show_today(
             lines.append(
                 f'- {quality} - {quality_text}'
                 f'\n(ред.: /edit_stool_{stool_id}{dated_command_suffix})'
-                f'\n(удал.: /delete_stool_{stool_id})\n'
+                f'\n(удал.: /delete_stool_{stool_id}'
+                f'{dated_command_suffix})\n'
             )
 
     if feelings:
@@ -1886,7 +2005,8 @@ def _show_today(
             lines.append(
                 f'- {feeling_desc}'
                 f'\n(ред.: /edit_feeling_{feeling_id}{dated_command_suffix})'
-                f'\n(удал.: /delete_feeling_{feeling_id})\n'
+                f'\n(удал.: /delete_feeling_{feeling_id}'
+                f'{dated_command_suffix})\n'
             )
     lines.append('\n💧 <b>Вода:</b>')
     lines.append(
@@ -1928,13 +2048,13 @@ def _show_today(
 
     lines.append('Добавить новое событие:')
 
-    _safe_edit_message_text(
-        bot,
-        '\n'.join(lines),
+    _safe_delete_message(bot, user_id, message_id)
+    sent_message = bot.send_message(
         user_id,
-        message_id,
+        '\n'.join(lines),
         reply_markup=manual_menu(),
     )
+    return sent_message.message_id
 
 
 def _export_and_send(bot: telebot.TeleBot, user_id: int) -> None:

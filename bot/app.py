@@ -985,10 +985,19 @@ def build_app(bot: telebot.TeleBot) -> None:
 
         if data.startswith('manual_meal_'):
             meal_type = data.replace('manual_meal_', '')
+            meal_names = {
+                'breakfast': 'завтрака',
+                'lunch': 'обеда',
+                'dinner': 'ужина',
+                'snack': 'перекуса',
+            }
             target_date = _stats_date_for_interaction(
                 user_id, call.message.message_id)
-            bot.edit_message_text('🍽️ Введите описание:',
-                                  user_id, call.message.message_id)
+            bot.edit_message_text(
+                f'🍽️ Введите описание {meal_names.get(meal_type, "приема пищи")}:',
+                user_id,
+                call.message.message_id,
+            )
             states.set(
                 user_id,
                 UserState('manual', 'meal_desc', {

@@ -13,8 +13,8 @@ from bot.keyboards import (back_to_main, confirm_delete, edit_timetable_menu,
                            main_menu, manual_menu)
 from bot.scheduler import run_scheduler
 from bot.states import StateStore, UserState
-from bot.validators import (validate_stool_quality, validate_text,
-                            validate_time_hhmm)
+from bot.validators import (validate_date_display, validate_stool_quality,
+                            validate_text, validate_time_hhmm)
 from config import (APP_TZ, DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE,
                     TELEGRAM_TOKEN)
 from db.repositories import (add_feeling, add_medicine, add_stool,
@@ -141,6 +141,51 @@ def _today_display() -> str:
         str: Результат выполнения функции.
     """
     return datetime.now(APP_TZ).strftime(DATE_FORMAT_DISPLAY)
+
+
+def _display_date(date_iso: str) -> str:
+    """
+    Преобразует дату из формата хранения в пользовательский формат.
+
+    Args:
+        date_iso: Дата в формате хранения.
+
+    Returns:
+        str: Дата в пользовательском формате.
+    """
+    return datetime.strptime(date_iso, DATE_FORMAT_STORAGE).strftime(
+        DATE_FORMAT_DISPLAY
+    )
+
+
+def _date_to_command_token(date_iso: str) -> str:
+    """
+    Возвращает безопасный для Telegram-команды токен даты.
+
+    Args:
+        date_iso: Дата в формате хранения.
+
+    Returns:
+        str: Токен даты без дефисов.
+    """
+    return date_iso.replace('-', '')
+
+
+def _date_from_command_token(token: str | None) -> str | None:
+    """
+    Преобразует токен даты из команды в формат хранения.
+
+    Args:
+        token: Токен из текста команды.
+
+    Returns:
+        str | None: Дата в формате хранения или `None`.
+    """
+    if not token:
+        return None
+    if re.fullmatch(r'\d{8}', token):
+        return datetime.strptime(token, '%Y%m%d').strftime(DATE_FORMAT_STORAGE)
+    return token
 
 
 def _help_text() -> str:
@@ -324,6 +369,56 @@ def build_app(bot: telebot.TeleBot) -> None:
     init_db()
     _configure_telegram_commands(bot)
     states = StateStore()
+    stats_context: dict[int, dict[str, int | str]] = {}
+
+    def _set_stats_context(user_id: int, message_id: int, date_iso: str) -> None:
+        stats_context[user_id] = {
+            'message_id': message_id,
+            'date': date_iso,
+        }
+
+    def _clear_stats_context(user_id: int) -> None:
+        stats_context.pop(user_id, None)
+
+    def _get_stats_context(user_id: int) -> dict[str, int | str] | None:
+        return stats_context.get(user_id)
+
+    def _stats_context_matches(user_id: int, message_id: int) -> bool:
+        context = _get_stats_context(user_id)
+        if not context:
+            return False
+        return context['message_id'] == message_id
+
+    def _show_stats(message_id: int, user_id: int, date_iso: str | None = None) -> None:
+        normalized_date = date_iso or _today_iso()
+        _set_stats_context(user_id, message_id, normalized_date)
+        _show_today(bot, user_id, message_id, normalized_date)
+
+    def _refresh_stats_context(user_id: int) -> bool:
+        context = _get_stats_context(user_id)
+        if not context:
+            return False
+        _show_today(
+            bot,
+            user_id,
+            int(context['message_id']),
+            str(context['date']),
+        )
+        return True
+
+    def _reply_after_change(message: Message, text: str, return_to_stats: bool) -> None:
+        if return_to_stats and _refresh_stats_context(message.from_user.id):
+            bot.reply_to(message, text)
+            return
+        bot.reply_to(message, text, reply_markup=main_menu())
+
+    def _stats_date_for_interaction(user_id: int, message_id: int | None = None) -> str:
+        context = _get_stats_context(user_id)
+        if not context:
+            return _today_iso()
+        if message_id is not None and context['message_id'] != message_id:
+            return _today_iso()
+        return str(context['date'])
 
     def send_breakfast(user_id: int) -> None:
         """
@@ -447,6 +542,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             Ноне: Возвращаемое значение отсутствует.
         """
         user_id = message.from_user.id
+        _clear_stats_context(user_id)
         register_user(user_id)
         ensure_sleep_for_day(user_id, _today_iso())
         bot.send_message(
@@ -474,6 +570,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             Ноне: Возвращаемое значение отсутствует.
         """
+        _clear_stats_context(message.from_user.id)
         bot.send_message(message.from_user.id, 'Главное меню:',
                          reply_markup=main_menu())
 
@@ -492,6 +589,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             Ноне: Возвращаемое значение отсутствует.
         """
         states.clear(message.from_user.id)
+        _clear_stats_context(message.from_user.id)
         bot.send_message(message.from_user.id,
                          '✅ Ожидание отменено.', reply_markup=main_menu())
 
@@ -531,7 +629,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         meal_id = int(re.match(r'^/edit_meal_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState(
-            'edit', 'meal_desc', {'id': meal_id}))
+            'edit',
+            'meal_desc',
+            {
+                'id': meal_id,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
         bot.reply_to(message, 'Введите новое описание:')
 
     @bot.message_handler(regexp=r'^/edit_med_(\d+)$')
@@ -550,7 +654,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         med_id = int(re.match(r'^/edit_med_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState(
-            'edit', 'med_name', {'id': med_id}))
+            'edit',
+            'med_name',
+            {
+                'id': med_id,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
         bot.reply_to(message, 'Введите новое название:')
 
     @bot.message_handler(regexp=r'^/edit_stool_(\d+)$')
@@ -569,7 +679,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         stool_id = int(re.match(r'^/edit_stool_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState(
-            'edit', 'stool_quality', {'id': stool_id}))
+            'edit',
+            'stool_quality',
+            {
+                'id': stool_id,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
         bot.reply_to(message, 'Введите новую оценку (0-7):')
 
     @bot.message_handler(regexp=r'^/edit_feeling_(\d+)$')
@@ -589,10 +705,16 @@ def build_app(bot: telebot.TeleBot) -> None:
         feeling_id = int(
             re.match(r'^/edit_feeling_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState(
-            'edit', 'feeling_desc', {'id': feeling_id}))
+            'edit',
+            'feeling_desc',
+            {
+                'id': feeling_id,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
         bot.reply_to(message, 'Введите новое описание:')
 
-    @bot.message_handler(regexp=r'^/edit_water$')
+    @bot.message_handler(regexp=r'^/edit_water(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$')
     def edit_water_cmd(message: Message):
         """
         Выполняет операцию `edit_water_cmd` в бизнес-логике модуля.
@@ -606,17 +728,25 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             Ноне: Возвращаемое значение отсутствует.
         """
+        match = re.match(
+            r'^/edit_water(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
+            message.text,
+        )
+        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
         states.set(message.from_user.id, UserState(
-            'edit', 'water_count_today', {'date': _today_iso()}))
+            'edit',
+            'water_count_today',
+            {
+                'date': date_iso,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
         bot.reply_to(
             message,
-            (
-                'Введите количество стаканов воды за сегодня '
-                '(целое число, 0+):'
-            ),
+            f'Введите количество стаканов воды за {_display_date(date_iso)} (целое число, 0+):',
         )
 
-    @bot.message_handler(regexp=r'^/edit_sleep_wakeup$')
+    @bot.message_handler(regexp=r'^/edit_sleep_wakeup(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$')
     def edit_sleep_wakeup_cmd(message: Message):
         """
         Выполняет операцию `edit_sleep_wakeup_cmd` в бизнес-логике модуля.
@@ -630,11 +760,26 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             Ноне: Возвращаемое значение отсутствует.
         """
+        match = re.match(
+            r'^/edit_sleep_wakeup(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
+            message.text,
+        )
+        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        ensure_sleep_for_day(message.from_user.id, date_iso)
         states.set(message.from_user.id, UserState(
-            'edit', 'sleep_wakeup_today', {'date': _today_iso()}))
-        bot.reply_to(message, 'Введите время подъема в формате ЧЧ:ММ:')
+            'edit',
+            'sleep_wakeup_today',
+            {
+                'date': date_iso,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
+        bot.reply_to(
+            message,
+            f'Введите время подъема за {_display_date(date_iso)} в формате ЧЧ:ММ:',
+        )
 
-    @bot.message_handler(regexp=r'^/edit_sleep_bed$')
+    @bot.message_handler(regexp=r'^/edit_sleep_bed(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$')
     def edit_sleep_bed_cmd(message: Message):
         """
         Выполняет операцию `edit_sleep_bed_cmd` в бизнес-логике модуля.
@@ -648,11 +793,26 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             Ноне: Возвращаемое значение отсутствует.
         """
+        match = re.match(
+            r'^/edit_sleep_bed(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
+            message.text,
+        )
+        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        ensure_sleep_for_day(message.from_user.id, date_iso)
         states.set(message.from_user.id, UserState(
-            'edit', 'sleep_bed_today', {'date': _today_iso()}))
-        bot.reply_to(message, 'Введите время отхода ко сну в формате ЧЧ:ММ:')
+            'edit',
+            'sleep_bed_today',
+            {
+                'date': date_iso,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
+        bot.reply_to(
+            message,
+            f'Введите время отхода ко сну за {_display_date(date_iso)} в формате ЧЧ:ММ:',
+        )
 
-    @bot.message_handler(regexp=r'^/edit_sleep_quality$')
+    @bot.message_handler(regexp=r'^/edit_sleep_quality(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$')
     def edit_sleep_quality_cmd(message: Message):
         """
         Выполняет операцию `edit_sleep_quality_cmd` в бизнес-логике модуля.
@@ -666,11 +826,28 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             Ноне: Возвращаемое значение отсутствует.
         """
+        match = re.match(
+            r'^/edit_sleep_quality(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
+            message.text,
+        )
+        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        ensure_sleep_for_day(message.from_user.id, date_iso)
         states.set(message.from_user.id, UserState(
-            'edit', 'sleep_quality_today', {'date': _today_iso()}))
-        bot.reply_to(message, 'Введите описание качества сна:')
+            'edit',
+            'sleep_quality_today',
+            {
+                'date': date_iso,
+                'return_to_stats': _get_stats_context(message.from_user.id) is not None,
+            },
+        ))
+        bot.reply_to(
+            message,
+            f'Введите описание качества сна за {_display_date(date_iso)}:',
+        )
 
-    @bot.message_handler(regexp=r'^/delete_(meal|med|stool|feeling)_(\d+)$')
+    @bot.message_handler(
+        regexp=r'^/delete_(meal|med|stool|feeling)_(\d+)(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$'
+    )
     def delete_cmd(message: Message):
         """
         Выполняет операцию `delete_cmd` в бизнес-логике модуля.
@@ -685,13 +862,19 @@ def build_app(bot: telebot.TeleBot) -> None:
             Ноне: Возвращаемое значение отсутствует.
         """
         match = re.match(
-            r'^/delete_(meal|med|stool|feeling)_(\d+)$', message.text)
+            r'^/delete_(meal|med|stool|feeling)_(\d+)(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
+            message.text,
+        )
         item_type = match.group(1)
         item_id = int(match.group(2))
+        date_iso = (
+            _date_from_command_token(match.group(3))
+            or _stats_date_for_interaction(message.from_user.id)
+        )
         bot.send_message(
             message.from_user.id,
             '❓ Вы уверены, что хотите удалить эту запись?',
-            reply_markup=confirm_delete(item_type, item_id),
+            reply_markup=confirm_delete(item_type, item_id, date_iso),
         )
 
     @bot.callback_query_handler(func=lambda _: True)
@@ -712,6 +895,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         data = call.data or ''
 
         if data == 'back_to_main':
+            _clear_stats_context(user_id)
             _safe_edit_message_text(
                 bot,
                 'Главное меню:',
@@ -789,6 +973,8 @@ def build_app(bot: telebot.TeleBot) -> None:
             return
 
         if data == 'manual_menu':
+            if not _stats_context_matches(user_id, call.message.message_id):
+                _clear_stats_context(user_id)
             bot.edit_message_text(
                 '➕ Добавить событие: выберите тип записи',
                 user_id,
@@ -799,26 +985,43 @@ def build_app(bot: telebot.TeleBot) -> None:
 
         if data.startswith('manual_meal_'):
             meal_type = data.replace('manual_meal_', '')
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
             bot.edit_message_text('🍽️ Введите описание:',
                                   user_id, call.message.message_id)
             states.set(
                 user_id,
                 UserState('manual', 'meal_desc', {
-                          'meal_type': meal_type, 'date': _today_iso()}),
+                          'meal_type': meal_type,
+                          'date': target_date,
+                          'return_to_stats': _stats_context_matches(
+                              user_id, call.message.message_id),
+                }),
             )
             return
 
         if data == 'manual_medicine':
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
             bot.edit_message_text(
                 '💊 Введите название лекарства:',
                 user_id,
                 call.message.message_id,
             )
             states.set(user_id, UserState(
-                'manual', 'med_name', {'date': _today_iso()}))
+                'manual',
+                'med_name',
+                {
+                    'date': target_date,
+                    'return_to_stats': _stats_context_matches(
+                        user_id, call.message.message_id),
+                },
+            ))
             return
 
         if data == 'manual_stool':
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
             lines = ['🚽 Оцените качество стула по Бристольской шкале:\n']
             for key in range(0, 8):
                 lines.append(f'{key} — {BRISTOL.get(key, "неизвестно")}')
@@ -826,64 +1029,127 @@ def build_app(bot: telebot.TeleBot) -> None:
             bot.edit_message_text(
                 '\n'.join(lines), user_id, call.message.message_id)
             states.set(user_id, UserState(
-                'manual', 'stool_quality', {'date': _today_iso()}))
+                'manual',
+                'stool_quality',
+                {
+                    'date': target_date,
+                    'return_to_stats': _stats_context_matches(
+                        user_id, call.message.message_id),
+                },
+            ))
             return
 
         if data == 'manual_feeling':
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
             bot.edit_message_text(
                 '😊 Опишите ваше самочувствие:',
                 user_id,
                 call.message.message_id,
             )
             states.set(user_id, UserState(
-                'manual', 'feeling_desc', {'date': _today_iso()}))
+                'manual',
+                'feeling_desc',
+                {
+                    'date': target_date,
+                    'return_to_stats': _stats_context_matches(
+                        user_id, call.message.message_id),
+                },
+            ))
             return
 
         if data == 'manual_sleep_wakeup':
-            ensure_sleep_for_day(user_id, _today_iso())
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
+            ensure_sleep_for_day(user_id, target_date)
             bot.edit_message_text(
                 '🌅 Введите фактическое время подъема (ЧЧ:ММ):',
                 user_id,
                 call.message.message_id,
             )
             states.set(user_id, UserState(
-                'manual', 'sleep_wakeup_time', {'date': _today_iso()}))
+                'manual',
+                'sleep_wakeup_time',
+                {
+                    'date': target_date,
+                    'return_to_stats': _stats_context_matches(
+                        user_id, call.message.message_id),
+                },
+            ))
             return
 
         if data == 'manual_sleep_bed':
-            ensure_sleep_for_day(user_id, _today_iso())
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
+            ensure_sleep_for_day(user_id, target_date)
             bot.edit_message_text(
                 '🌙 Введите фактическое время отхода ко сну (ЧЧ:ММ):',
                 user_id,
                 call.message.message_id,
             )
             states.set(user_id, UserState(
-                'manual', 'sleep_bed_time', {'date': _today_iso()}))
+                'manual',
+                'sleep_bed_time',
+                {
+                    'date': target_date,
+                    'return_to_stats': _stats_context_matches(
+                        user_id, call.message.message_id),
+                },
+            ))
             return
 
         if data == 'manual_sleep_quality':
-            ensure_sleep_for_day(user_id, _today_iso())
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
+            ensure_sleep_for_day(user_id, target_date)
             bot.edit_message_text('🛌 Опишите качество сна:',
                                   user_id, call.message.message_id)
             states.set(user_id, UserState(
-                'manual', 'sleep_quality_desc', {'date': _today_iso()}))
+                'manual',
+                'sleep_quality_desc',
+                {
+                    'date': target_date,
+                    'return_to_stats': _stats_context_matches(
+                        user_id, call.message.message_id),
+                },
+            ))
             return
 
         if data == 'manual_water':
-            total_glasses = increment_water(user_id, _today_iso())
+            target_date = _stats_date_for_interaction(
+                user_id, call.message.message_id)
+            total_glasses = increment_water(user_id, target_date)
             states.clear(user_id)
             bot.answer_callback_query(call.id, text='✅ Добавлен стакан воды.')
-            _safe_edit_message_text(
-                bot,
-                f'💧 Добавлен стакан воды. Сегодня: {total_glasses}.',
-                user_id,
-                call.message.message_id,
-                reply_markup=manual_menu(),
-            )
+            if _stats_context_matches(user_id, call.message.message_id):
+                _show_stats(call.message.message_id, user_id, target_date)
+            else:
+                _safe_edit_message_text(
+                    bot,
+                    f'💧 Добавлен стакан воды. Сегодня: {total_glasses}.',
+                    user_id,
+                    call.message.message_id,
+                    reply_markup=manual_menu(),
+                )
             return
 
         if data == 'show_today':
-            _show_today(bot, user_id, call.message.message_id)
+            _show_stats(call.message.message_id, user_id)
+            return
+
+        if data == 'show_stats_by_date':
+            _safe_edit_message_text(
+                bot,
+                '🗓 Введите дату в формате ДД.ММ.ГГГГ, за которую нужна статистика:',
+                user_id,
+                call.message.message_id,
+                reply_markup=back_to_main(),
+            )
+            states.set(user_id, UserState(
+                'pending_question',
+                'stats_date',
+                {'message_id': call.message.message_id},
+            ))
             return
 
         if data == 'help':
@@ -917,7 +1183,9 @@ def build_app(bot: telebot.TeleBot) -> None:
             return
 
         if data.startswith('confirm_delete:'):
-            _, item_type, item_id_s = data.split(':', 2)
+            parts = data.split(':', 3)
+            _, item_type, item_id_s = parts[:3]
+            date_iso = parts[3] if len(parts) > 3 else None
             item_id = int(item_id_s)
             is_successful = False
             if item_type == 'meal':
@@ -936,7 +1204,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     if is_successful
                     else 'Не найдено / нет прав'
                 ))
-            _show_today(bot, user_id, call.message.message_id)
+            if date_iso and _get_stats_context(user_id):
+                _set_stats_context(
+                    user_id,
+                    int(_get_stats_context(user_id)['message_id']),
+                    date_iso,
+                )
+            if not _refresh_stats_context(user_id):
+                _show_today(bot, user_id, call.message.message_id, date_iso)
             return
 
         if data == 'export_all_stats':
@@ -981,14 +1256,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     desc = validate_text(text)
                     is_successful = update_meal(
                         user_id, state.data['id'], desc)
-                    bot.reply_to(
+                    _reply_after_change(
                         message,
                         (
                             '✅ Обновлено.'
                             if is_successful
                             else '❌ Не найдено / нет прав.'
                         ),
-                        reply_markup=main_menu(),
+                        bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
                     return
@@ -1004,14 +1279,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     dosage = None if text == '-' else validate_text(text)
                     is_successful = update_medicine(
                         user_id, state.data['id'], state.data['name'], dosage)
-                    bot.reply_to(
+                    _reply_after_change(
                         message,
                         (
                             '✅ Обновлено.'
                             if is_successful
                             else '❌ Не найдено / нет прав.'
                         ),
-                        reply_markup=main_menu(),
+                        bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
                     return
@@ -1020,14 +1295,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     quality = validate_stool_quality(text)
                     is_successful = update_stool(
                         user_id, state.data['id'], quality)
-                    bot.reply_to(
+                    _reply_after_change(
                         message,
                         (
                             '✅ Обновлено.'
                             if is_successful
                             else '❌ Не найдено / нет прав.'
                         ),
-                        reply_markup=main_menu(),
+                        bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
                     return
@@ -1036,14 +1311,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     desc = validate_text(text)
                     is_successful = update_feeling(
                         user_id, state.data['id'], desc)
-                    bot.reply_to(
+                    _reply_after_change(
                         message,
                         (
                             '✅ Обновлено.'
                             if is_successful
                             else '❌ Не найдено / нет прав.'
                         ),
-                        reply_markup=main_menu(),
+                        bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
                     return
@@ -1052,8 +1327,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                         raise ValueError('Введите целое число от 0 и больше.')
                     water_count = int(text)
                     set_water_for_day(user_id, state.data['date'], water_count)
-                    bot.reply_to(message, '✅ Вода обновлена.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Вода обновлена.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
@@ -1063,8 +1341,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                             'Неверный формат. Введите время ЧЧ:ММ.')
                     upsert_sleep_times(
                         user_id, state.data['date'], wakeup_time=text)
-                    bot.reply_to(message, '✅ Подъем обновлен.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Подъем обновлен.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
@@ -1074,10 +1355,10 @@ def build_app(bot: telebot.TeleBot) -> None:
                             'Неверный формат. Введите время ЧЧ:ММ.')
                     upsert_sleep_times(
                         user_id, state.data['date'], bed_time=text)
-                    bot.reply_to(
+                    _reply_after_change(
                         message,
                         '✅ Время отхода ко сну обновлено.',
-                        reply_markup=main_menu(),
+                        bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
                     return
@@ -1085,8 +1366,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                 if state.step == 'sleep_quality_today':
                     desc = validate_text(text)
                     upsert_sleep_quality(user_id, state.data['date'], desc)
-                    bot.reply_to(message, '✅ Качество сна обновлено.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Качество сна обновлено.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
@@ -1132,8 +1416,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                         state.data['meal_type'],
                         desc,
                     )
-                    bot.reply_to(message, '✅ Запись сохранена.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Запись сохранена.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
@@ -1158,24 +1445,33 @@ def build_app(bot: telebot.TeleBot) -> None:
                         state.data['name'],
                         dosage,
                     )
-                    bot.reply_to(message, '✅ Лекарство добавлено.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Лекарство добавлено.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
                 if state.step == 'stool_quality':
                     quality = validate_stool_quality(text)
                     add_stool(user_id, state.data['date'], quality)
-                    bot.reply_to(message, '✅ Запись сохранена.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Запись сохранена.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
                 if state.step == 'feeling_desc':
                     desc = validate_text(text)
                     add_feeling(user_id, state.data['date'], desc)
-                    bot.reply_to(message, '✅ Запись сохранена.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Запись сохранена.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
@@ -1185,8 +1481,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                             'Неверный формат. Введите время ЧЧ:ММ.')
                     upsert_sleep_times(
                         user_id, state.data['date'], wakeup_time=text)
-                    bot.reply_to(message, '✅ Время подъема сохранено.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Время подъема сохранено.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
@@ -1196,10 +1495,10 @@ def build_app(bot: telebot.TeleBot) -> None:
                             'Неверный формат. Введите время ЧЧ:ММ.')
                     upsert_sleep_times(
                         user_id, state.data['date'], bed_time=text)
-                    bot.reply_to(
+                    _reply_after_change(
                         message,
                         '✅ Время отхода ко сну сохранено.',
-                        reply_markup=main_menu(),
+                        bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
                     return
@@ -1207,12 +1506,21 @@ def build_app(bot: telebot.TeleBot) -> None:
                 if state.step == 'sleep_quality_desc':
                     desc = validate_text(text)
                     upsert_sleep_quality(user_id, state.data['date'], desc)
-                    bot.reply_to(message, '✅ Качество сна сохранено.',
-                                 reply_markup=main_menu())
+                    _reply_after_change(
+                        message,
+                        '✅ Качество сна сохранено.',
+                        bool(state.data.get('return_to_stats')),
+                    )
                     states.clear(user_id)
                     return
 
             if state.kind == 'pending_question':
+                if state.step == 'stats_date':
+                    date_iso = validate_date_display(text)
+                    _show_stats(state.data['message_id'], user_id, date_iso)
+                    states.clear(user_id)
+                    return
+
                 if state.step == 'meal':
                     desc = validate_text(text)
                     upsert_meal(
@@ -1254,7 +1562,12 @@ def build_app(bot: telebot.TeleBot) -> None:
     thread.start()
 
 
-def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
+def _show_today(
+    bot: telebot.TeleBot,
+    user_id: int,
+    message_id: int,
+    date_iso: str | None = None,
+) -> None:
     """
     Выполняет операцию `_show_today` в бизнес-логике модуля.
 
@@ -1265,12 +1578,15 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
         bot: Экземпляр Telegram-бота для отправки и редактирования сообщений.
         user_id: Идентификатор пользователя в Telegram.
         message_id: Идентификатор сообщения в Telegram.
+        date_iso: Дата статистики в формате хранения. По умолчанию сегодня.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        None: Возвращаемое значение отсутствует.
     """
-    date_iso = _today_iso()
-    date_display = _today_display()
+    date_iso = date_iso or _today_iso()
+    date_display = _display_date(date_iso)
+    is_today = date_iso == _today_iso()
+    dated_command_suffix = '' if is_today else f'_{_date_to_command_token(date_iso)}'
 
     ensure_sleep_for_day(user_id, date_iso)
     sleep = get_sleep_for_day(user_id, date_iso)
@@ -1343,7 +1659,7 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
     lines.append('\n💧 <b>Вода:</b>')
     lines.append(
         f'- Выпито стаканов: {water_glasses}'
-        '\n(ред.: /edit_water)\n'
+        f'\n(ред.: /edit_water{dated_command_suffix})\n'
     )
 
     wakeup_time = '--:--'
@@ -1356,20 +1672,27 @@ def _show_today(bot: telebot.TeleBot, user_id: int, message_id: int) -> None:
                         or '').strip() or 'не указано'
 
     lines.append('\n🛌 <b>Сон:</b>')
-    lines.append(f'- Подъем: {wakeup_time}\n(ред.: /edit_sleep_wakeup)\n')
-    lines.append(f'- Отход ко сну: {bed_time}\n(ред.: /edit_sleep_bed)\n')
     lines.append(
-        f'- Качество сна: {quality_desc}\n(ред.: /edit_sleep_quality)\n')
+        f'- Подъем: {wakeup_time}\n(ред.: /edit_sleep_wakeup{dated_command_suffix})\n'
+    )
+    lines.append(
+        f'- Отход ко сну: {bed_time}\n(ред.: /edit_sleep_bed{dated_command_suffix})\n'
+    )
+    lines.append(
+        f'- Качество сна: {quality_desc}\n(ред.: /edit_sleep_quality{dated_command_suffix})\n'
+    )
 
     if len(lines) == 1:
-        lines.append('За сегодня записей нет.')
+        lines.append(f'За {date_display} записей нет.')
+
+    lines.append('Добавить новое событие:')
 
     _safe_edit_message_text(
         bot,
         '\n'.join(lines),
         user_id,
         message_id,
-        reply_markup=back_to_main(),
+        reply_markup=manual_menu(),
     )
 
 

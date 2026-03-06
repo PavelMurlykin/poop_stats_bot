@@ -68,7 +68,7 @@ def _safe_edit_message_text(
         reply_markup: Объект разметки для ответа бота.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        None: Возвращаемое значение отсутствует.
     """
     try:
         bot.edit_message_text(
@@ -103,7 +103,7 @@ def _safe_edit_message_reply_markup(
         reply_markup: Объект разметки для ответа бота.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        None: Возвращаемое значение отсутствует.
     """
     try:
         bot.edit_message_reply_markup(
@@ -219,7 +219,7 @@ def _configure_telegram_commands(bot: telebot.TeleBot) -> None:
         bot: Экземпляр Telegram-бота для отправки и редактирования сообщений.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        None: Возвращаемое значение отсутствует.
     """
     commands = [
         BotCommand('start', 'Перезапустить бота'),
@@ -364,7 +364,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         bot: Экземпляр Telegram-бота для отправки и редактирования сообщений.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        None: Возвращаемое значение отсутствует.
     """
     init_db()
     _configure_telegram_commands(bot)
@@ -431,7 +431,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             user_id: Идентификатор пользователя в Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         bot.send_message(user_id, '🍳 Что вы ели на завтрак?',
                          reply_markup=back_to_main())
@@ -452,7 +452,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             user_id: Идентификатор пользователя в Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         bot.send_message(user_id, '🍲 Что вы ели на обед?',
                          reply_markup=back_to_main())
@@ -473,7 +473,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             user_id: Идентификатор пользователя в Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         bot.send_message(user_id, '🍽️ Что вы ели на ужин?',
                          reply_markup=back_to_main())
@@ -494,7 +494,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             user_id: Идентификатор пользователя в Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         lines = ['🚽 Оцените качество стула по Бристольской шкале:\n']
         for key in range(0, 8):
@@ -516,7 +516,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             user_id: Идентификатор пользователя в Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         ensure_sleep_for_day(user_id, _today_iso())
         bot.send_message(
@@ -539,7 +539,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         user_id = message.from_user.id
         _clear_stats_context(user_id)
@@ -568,7 +568,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         _clear_stats_context(message.from_user.id)
         bot.send_message(message.from_user.id, 'Главное меню:',
@@ -586,7 +586,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         states.clear(message.from_user.id)
         _clear_stats_context(message.from_user.id)
@@ -605,7 +605,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         bot.send_message(
             message.from_user.id,
@@ -625,7 +625,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         meal_id = int(re.match(r'^/edit_meal_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState(
@@ -650,7 +650,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         med_id = int(re.match(r'^/edit_med_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState(
@@ -675,7 +675,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         stool_id = int(re.match(r'^/edit_stool_(\d+)$', message.text).group(1))
         states.set(message.from_user.id, UserState(
@@ -686,7 +686,13 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _get_stats_context(message.from_user.id) is not None,
             },
         ))
-        bot.reply_to(message, 'Введите новую оценку (0-7):')
+
+        lines = ['🚽 Введите новую оценку качества стула по Бристольской шкале:\n']
+        for key in range(0, 8):
+            lines.append(f'{key} — {BRISTOL.get(key, "неизвестно")}')
+        lines.append('\nВведите цифру от 0 до 7:')
+
+        bot.reply_to(message, '\n'.join(lines))
 
     @bot.message_handler(regexp=r'^/edit_feeling_(\d+)$')
     def edit_feeling_cmd(message: Message):
@@ -700,7 +706,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         feeling_id = int(
             re.match(r'^/edit_feeling_(\d+)$', message.text).group(1))
@@ -726,7 +732,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         match = re.match(
             r'^/edit_water(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
@@ -758,7 +764,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         match = re.match(
             r'^/edit_sleep_wakeup(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
@@ -791,7 +797,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         match = re.match(
             r'^/edit_sleep_bed(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
@@ -824,7 +830,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         match = re.match(
             r'^/edit_sleep_quality(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
@@ -859,7 +865,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         match = re.match(
             r'^/delete_(meal|med|stool|feeling)_(\d+)(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$',
@@ -889,7 +895,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             call: Объект callback-запроса от inline-кнопки.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         user_id = call.from_user.id
         data = call.data or ''
@@ -1005,7 +1011,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                           'date': target_date,
                           'return_to_stats': _stats_context_matches(
                               user_id, call.message.message_id),
-                }),
+                          }),
             )
             return
 
@@ -1245,7 +1251,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             message: Входящее сообщение от пользователя Telegram.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            None: Возвращаемое значение отсутствует.
         """
         user_id = message.from_user.id
         text = (message.text or '').strip()
@@ -1717,7 +1723,7 @@ def _export_and_send(bot: telebot.TeleBot, user_id: int) -> None:
         user_id: Идентификатор пользователя в Telegram.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        None: Возвращаемое значение отсутствует.
     """
     try:
         xlsx = generate_user_report_xlsx(user_id)

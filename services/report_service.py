@@ -1,5 +1,8 @@
+"""Сервис формирования XLSX-отчёта по статистике пользователя."""
+
 import io
 from datetime import date, datetime
+from typing import Any, TypeAlias
 
 import pandas as pd
 from openpyxl.styles import Alignment, Border, Font, Side
@@ -7,6 +10,9 @@ from openpyxl.utils import get_column_letter
 
 from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE
 from db.repositories import fetch_all_for_report
+
+RowData: TypeAlias = dict[str, Any]
+RowsData: TypeAlias = list[RowData]
 
 DATE_COLUMN_INDEXES = {1, 12, 13}
 NUMBER_COLUMN_INDEXES = {5, 7, 9, 15}
@@ -38,7 +44,7 @@ COLUMN_WIDTHS = {
 
 BRISTOL = {
     0: 'Отсутствие дефекации',
-    1: 'Отдельные твёрдые комки, как орехи, трудно проходят [серьезный запор]',
+    1: 'Отдельные твёрдые комки, как орехи, трудно проходят [запор]',
     2: 'Колбасовидный, но комковатый [запор или склонность к запору]',
     3: 'Колбасовидный с трещинами на поверхности [норма]',
     4: 'Колбасовидный гладкий и мягкий [норма]',
@@ -47,26 +53,40 @@ BRISTOL = {
     7: 'Водянистый, без твёрдых кусочков [сильная диарея]',
 }
 
+REPORT_COLUMNS = [
+    'Дата',
+    'Завтрак',
+    'Обед',
+    'Ужин',
+    'Количество перекусов',
+    'Перекусы',
+    'Количество приемов лекарств',
+    'Лекарства',
+    'Количество походов в туалет',
+    'Качество стула',
+    'Самочувствие',
+    'Подъем',
+    'Отход ко сну',
+    'Качество сна',
+    'Стаканов воды',
+]
 
-def _to_display(date_value) -> str:
-    """
-    Выполняет операцию `_to_display` в бизнес-логике модуля.
 
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def _to_display(date_value: date | datetime | str) -> str:
+    """Преобразует дату из формата хранения в `ДД.ММ.ГГГГ`.
 
     Args:
-        date_value: Параметр `date_value` для текущего шага обработки.
+        date_value: Дата в виде `date`, `datetime` или строки `YYYY-MM-DD`.
 
     Returns:
-        str: Результат выполнения функции.
+        str: Дата в пользовательском формате отображения.
     """
     if isinstance(date_value, datetime):
         return date_value.strftime(DATE_FORMAT_DISPLAY)
     if isinstance(date_value, date):
         return date_value.strftime(DATE_FORMAT_DISPLAY)
-    parsed_datetime = datetime.strptime(str(date_value), DATE_FORMAT_STORAGE)
-    return parsed_datetime.strftime(DATE_FORMAT_DISPLAY)
+    parsed_date = datetime.strptime(str(date_value), DATE_FORMAT_STORAGE)
+    return parsed_date.strftime(DATE_FORMAT_DISPLAY)
 
 
 def _apply_worksheet_style(
@@ -74,32 +94,36 @@ def _apply_worksheet_style(
     total_rows: int,
     total_columns: int,
 ) -> None:
-    """
-    Выполняет операцию `_apply_worksheet_style` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Применяет оформление к листу Excel-отчёта.
 
     Args:
-        worksheet: Параметр `worksheet` для текущего шага обработки.
-        total_rows: Параметр `total_rows` для текущего шага обработки.
-        total_columns: Параметр `total_columns` для текущего шага обработки.
-
-    Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        worksheet: Рабочий лист openpyxl.
+        total_rows: Количество строк таблицы вместе с заголовком.
+        total_columns: Количество колонок в таблице.
     """
-    thin = Side(style='thin', color='000000')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
+    border_side = Side(style='thin', color='000000')
+    border = Border(
+        left=border_side,
+        right=border_side,
+        top=border_side,
+        bottom=border_side,
+    )
     header_font = Font(bold=True)
     header_alignment = Alignment(
-        horizontal='center', vertical='center', wrap_text=True)
+        horizontal='center',
+        vertical='center',
+        wrap_text=True,
+    )
     text_alignment = Alignment(
-        horizontal='left', vertical='top', wrap_text=True)
+        horizontal='left',
+        vertical='top',
+        wrap_text=True,
+    )
     centered_alignment = Alignment(horizontal='center', vertical='center')
 
-    for col_idx, width in COLUMN_WIDTHS.items():
-        worksheet.column_dimensions[get_column_letter(col_idx)].width = width
+    for column_index, width in COLUMN_WIDTHS.items():
+        column_name = get_column_letter(column_index)
+        worksheet.column_dimensions[column_name].width = width
 
     worksheet.row_dimensions[1].height = 36
     worksheet.freeze_panes = 'A2'
@@ -121,146 +145,199 @@ def _apply_worksheet_style(
                 cell.alignment = text_alignment
 
 
-def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
-    """
-    Выполняет операцию `generate_user_report_xlsx` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def _group_rows_by_date(rows: RowsData) -> dict[Any, RowsData]:
+    """Группирует список словарей по полю `date`.
 
     Args:
-        user_id: Идентификатор пользователя в Telegram.
+        rows: Список строк, содержащих ключ `date`.
 
     Returns:
-        io.BytesIO: Результат выполнения функции.
+        dict[Any, RowsData]: Словарь `дата -> список строк`.
     """
-    data = fetch_all_for_report(user_id)
-    meals = data['meals']
-    medicines = data['medicines']
-    stools = data['stools']
-    feelings = data['feelings']
-    water = data['water']
-    sleeps = data['sleeps']
+    grouped_rows: dict[Any, RowsData] = {}
+    for row in rows:
+        grouped_rows.setdefault(row['date'], []).append(row)
+    return grouped_rows
 
-    dates = sorted(
-        set(
-            [meal['date'] for meal in meals]
-            + [medicine['date'] for medicine in medicines]
-            + [stool['date'] for stool in stools]
-            + [feeling['date'] for feeling in feelings]
-            + [water_row['date'] for water_row in water]
-            + [sleep_row['date'] for sleep_row in sleeps]
-        )
+
+def _extract_meal_columns(
+    meals_for_day: RowsData,
+) -> tuple[str, str, str, int, str]:
+    """Формирует колонки отчёта по питанию для одной даты.
+
+    Args:
+        meals_for_day: Список приемов пищи за день.
+
+    Returns:
+        tuple[str, str, str, int, str]: Завтрак, обед, ужин, количество
+        перекусов и строка с перекусами.
+    """
+    breakfast = ''
+    lunch = ''
+    dinner = ''
+    snacks: list[str] = []
+
+    for meal in meals_for_day:
+        meal_type = meal['meal_type']
+        description = meal['description']
+        if meal_type == 'breakfast':
+            breakfast = description
+        elif meal_type == 'lunch':
+            lunch = description
+        elif meal_type == 'dinner':
+            dinner = description
+        elif meal_type == 'snack':
+            snacks.append(description)
+
+    return breakfast, lunch, dinner, len(snacks), '; '.join(snacks)
+
+
+def _extract_medicines_column(medicines_for_day: RowsData) -> tuple[int, str]:
+    """Формирует многострочную колонку с лекарствами за день.
+
+    Args:
+        medicines_for_day: Список записей лекарств за день.
+
+    Returns:
+        tuple[int, str]: Количество приемов лекарства и текстовая колонка.
+    """
+    items: list[str] = []
+    for medicine in medicines_for_day:
+        name = medicine['name']
+        dosage = (medicine.get('dosage') or '').strip()
+        items.append(f'{name} ({dosage})' if dosage else name)
+    return len(items), '\n'.join(items)
+
+
+def _extract_stool_columns(stools_for_day: RowsData) -> tuple[int, str]:
+    """Формирует колонки отчёта по стулу для одной даты.
+
+    Args:
+        stools_for_day: Список оценок стула за день.
+
+    Returns:
+        tuple[int, str]: Количество походов в туалет и расшифровка оценок.
+    """
+    stool_count = 0
+    descriptions: list[str] = []
+    for stool in stools_for_day:
+        quality = int(stool['quality'])
+        if quality != 0:
+            stool_count += 1
+        quality_text = BRISTOL.get(quality, 'неизвестно')
+        descriptions.append(f'{quality} — {quality_text}')
+    return stool_count, '\n'.join(descriptions)
+
+
+def _build_report_rows(data: RowData) -> list[list[Any]]:
+    """Строит строки DataFrame для Excel-отчёта.
+
+    Args:
+        data: Сырые данные пользователя из репозитория.
+
+    Returns:
+        list[list[Any]]: Нормализованные строки отчёта.
+    """
+    meals: RowsData = data['meals']
+    medicines: RowsData = data['medicines']
+    stools: RowsData = data['stools']
+    feelings: RowsData = data['feelings']
+    water: RowsData = data['water']
+    sleeps: RowsData = data['sleeps']
+
+    all_dates = sorted(
+        {
+            *[row['date'] for row in meals],
+            *[row['date'] for row in medicines],
+            *[row['date'] for row in stools],
+            *[row['date'] for row in feelings],
+            *[row['date'] for row in water],
+            *[row['date'] for row in sleeps],
+        }
     )
 
-    by_date_meals = {}
-    by_date_meds = {}
-    by_date_stools = {}
-    by_date_feelings = {}
-    by_date_water = {}
-    by_date_sleep = {}
+    meals_by_date = _group_rows_by_date(meals)
+    medicines_by_date = _group_rows_by_date(medicines)
+    stools_by_date = _group_rows_by_date(stools)
+    feelings_by_date = _group_rows_by_date(feelings)
+    water_by_date = {
+        row['date']: int(row['glasses_count'])
+        for row in water
+    }
+    sleep_by_date = {
+        row['date']: row
+        for row in sleeps
+    }
 
-    for meal in meals:
-        by_date_meals.setdefault(meal['date'], []).append(meal)
-    for medicine in medicines:
-        by_date_meds.setdefault(medicine['date'], []).append(medicine)
-    for stool in stools:
-        by_date_stools.setdefault(stool['date'], []).append(stool)
-    for feeling in feelings:
-        by_date_feelings.setdefault(feeling['date'], []).append(feeling)
-    for water_row in water:
-        by_date_water[water_row['date']] = int(water_row['glasses_count'])
-    for sleep in sleeps:
-        by_date_sleep[sleep['date']] = sleep
+    report_rows: list[list[Any]] = []
+    for day in all_dates:
+        breakfast, lunch, dinner, snacks_count, snacks_text = (
+            _extract_meal_columns(
+                meals_by_date.get(day, []),
+            )
+        )
+        medicines_count, medicines_text = _extract_medicines_column(
+            medicines_by_date.get(day, []),
+        )
+        stool_count, stool_text = _extract_stool_columns(
+            stools_by_date.get(day, []),
+        )
+        feelings_text = '\n'.join(
+            row['description'] for row in feelings_by_date.get(day, [])
+        )
 
-    rows = []
-    for day in dates:
-        breakfast = lunch = dinner = ''
-        snacks = []
-        for meal in by_date_meals.get(day, []):
-            if meal['meal_type'] == 'breakfast':
-                breakfast = meal['description']
-            elif meal['meal_type'] == 'lunch':
-                lunch = meal['description']
-            elif meal['meal_type'] == 'dinner':
-                dinner = meal['description']
-            elif meal['meal_type'] == 'snack':
-                snacks.append(meal['description'])
-
-        meds_list = []
-        for medicine in by_date_meds.get(day, []):
-            name = medicine['name']
-            dosage = (medicine.get('dosage') or '').strip()
-            meds_list.append(f'{name} ({dosage})' if dosage else name)
-
-        stool_list = []
-        stool_count = 0
-        for stool in by_date_stools.get(day, []):
-            quality = int(stool['quality'])
-            if quality != 0:
-                stool_count += 1
-            stool_list.append(
-                f'{quality} — {BRISTOL.get(quality, "неизвестно")}')
-
-        feeling_list = [
-            feeling['description']
-            for feeling in by_date_feelings.get(day, [])
-        ]
-
-        sleep_row = by_date_sleep.get(day, {})
-        sleep_wakeup = sleep_row.get('wakeup_time', '')
-        sleep_bed = sleep_row.get('bed_time', '')
+        sleep_row = sleep_by_date.get(day, {})
+        wakeup_time = sleep_row.get('wakeup_time', '')
+        bed_time = sleep_row.get('bed_time', '')
         sleep_quality = sleep_row.get('quality_description') or ''
 
-        rows.append(
+        report_rows.append(
             [
                 _to_display(day),
                 breakfast,
                 lunch,
                 dinner,
-                len(snacks),
-                '; '.join(snacks),
-                len(meds_list),
-                '\n'.join(meds_list),
+                snacks_count,
+                snacks_text,
+                medicines_count,
+                medicines_text,
                 stool_count,
-                '\n'.join(stool_list),
-                '\n'.join(feeling_list),
-                sleep_wakeup,
-                sleep_bed,
+                stool_text,
+                feelings_text,
+                wakeup_time,
+                bed_time,
                 sleep_quality,
-                by_date_water.get(day, 0),
+                water_by_date.get(day, 0),
             ]
         )
+    return report_rows
 
-    report_dataframe = pd.DataFrame(
-        rows,
-        columns=[
-            'Дата',
-            'Завтрак',
-            'Обед',
-            'Ужин',
-            'Количество перекусов',
-            'Перекусы',
-            'Количество приемов лекарств',
-            'Лекарства',
-            'Количество походов в туалет',
-            'Качество стула',
-            'Самочувствие',
-            'Подъем',
-            'Отход ко сну',
-            'Качество сна',
-            'Стаканов воды',
-        ],
-    )
+
+def generate_user_report_xlsx(user_id: int) -> io.BytesIO:
+    """Формирует XLSX-отчёт по всей истории пользователя.
+
+    Args:
+        user_id: Идентификатор пользователя Telegram.
+
+    Returns:
+        io.BytesIO: Буфер Excel-файла, готовый к отправке в Telegram.
+    """
+    rows = _build_report_rows(fetch_all_for_report(user_id))
+    report_dataframe = pd.DataFrame(rows, columns=REPORT_COLUMNS)
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        report_dataframe.to_excel(writer, index=False, sheet_name='Статистика')
+        report_dataframe.to_excel(
+            writer,
+            index=False,
+            sheet_name='Статистика',
+        )
         worksheet = writer.sheets['Статистика']
         _apply_worksheet_style(
             worksheet,
             total_rows=len(report_dataframe.index) + 1,
             total_columns=len(report_dataframe.columns),
         )
+
     output.seek(0)
     return output

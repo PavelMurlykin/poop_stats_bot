@@ -1,19 +1,24 @@
+"""Утилиты подключения к PostgreSQL и обёртки транзакций."""
+
+from collections.abc import Callable
+from functools import wraps
+from typing import Concatenate, ParamSpec, TypeVar
+
 import psycopg
 from psycopg.rows import dict_row
 
 from config import (DATABASE_URL, PG_CONNECT_TIMEOUT, PG_DB, PG_HOST,
                     PG_PASSWORD, PG_PORT, PG_USER)
 
+P = ParamSpec('P')
+R = TypeVar('R')
+
 
 def get_connection() -> psycopg.Connection:
-    """
-    Выполняет операцию `get_connection` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Создаёт новое подключение к PostgreSQL с `dict_row` row factory.
 
     Returns:
-        psycopg.Connection: Результат выполнения функции.
+        psycopg.Connection: Активное подключение к базе данных.
     """
     if DATABASE_URL:
         return psycopg.connect(
@@ -32,38 +37,38 @@ def get_connection() -> psycopg.Connection:
     )
 
 
-def with_db(function_to_wrap):
-    """
-    Выполняет операцию `with_db` в бизнес-логике модуля.
+def with_db(
+    function_to_wrap: Callable[Concatenate[psycopg.Cursor, P], R],
+) -> Callable[P, R]:
+    """Оборачивает репозиторную функцию в транзакцию PostgreSQL.
 
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    Функция, помеченная декоратором, получает первым аргументом курсор и
+    автоматически выполняется в рамках одной транзакции: при успехе делается
+    `commit`, при любой ошибке выполняется `rollback`.
 
     Args:
-        function_to_wrap: Параметр `function_to_wrap` для текущего шага
-                          обработки.
+        function_to_wrap: Репозиторная функция вида
+            `func(cursor, *args, **kwargs)`.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        Callable[P, R]: Обёрнутая функция с сохранённой сигнатурой.
     """
-    def wrapper(*args, **kwargs):
-        """
-        Выполняет операцию `wrapper` в бизнес-логике модуля.
 
-        Функция используется внутри приложения и поддерживает контракт между
-        компонентами.
+    @wraps(function_to_wrap)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        """Выполняет обёрнутую функцию в транзакции и закрывает подключение.
 
         Args:
-            args: Параметр `args` для текущего шага обработки.
-            kwargs: Параметр `kwargs` для текущего шага обработки.
+            *args: Позиционные аргументы исходной функции без курсора.
+            **kwargs: Именованные аргументы исходной функции.
 
         Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            R: Результат выполнения обёрнутой функции.
         """
         connection = get_connection()
         try:
-            cursor = connection.cursor()
-            result = function_to_wrap(cursor, *args, **kwargs)
+            with connection.cursor() as cursor:
+                result = function_to_wrap(cursor, *args, **kwargs)
             connection.commit()
             return result
         except Exception:
@@ -71,4 +76,5 @@ def with_db(function_to_wrap):
             raise
         finally:
             connection.close()
+
     return wrapper

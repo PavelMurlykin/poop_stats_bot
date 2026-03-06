@@ -1,86 +1,57 @@
+"""Хранилище состояний пользовательских диалогов бота."""
+
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass
 class UserState:
-    """
-    Инкапсулирует сущность `UserState` в предметной области.
+    """Описывает текущее состояние диалога конкретного пользователя.
 
-    Класс объединяет связанные данные и поведение для работы модуля.
+    Attributes:
+        kind: Тип состояния (`awaiting_time`, `pending_question`, `manual`,
+            `edit`).
+        step: Текущий шаг внутри сценария выбранного состояния.
+        data: Дополнительный контекст сценария в формате словаря.
     """
-    kind: str   # awaiting_time | pending_question | manual | edit
+
+    kind: str
     step: str
-    data: Dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 class StateStore:
-    """
-    Инкапсулирует сущность `StateStore` в предметной области.
-
-    Класс объединяет связанные данные и поведение для работы модуля.
-    """
+    """Предоставляет in-memory CRUD для состояний пользователей Telegram."""
 
     def __init__(self) -> None:
-        """
-        Выполняет операцию `__init__` в бизнес-логике модуля.
+        """Создаёт пустое хранилище состояний по `user_id`."""
+        self._states: dict[int, UserState] = {}
 
-        Функция используется внутри приложения и поддерживает контракт между
-        компонентами.
-
-        Args:
-            self: Ссылка на текущий экземпляр класса.
-
-        Returns:
-            Ноне: Возвращаемое значение отсутствует.
-        """
-        self._states: Dict[int, UserState] = {}
-
-    def get(self, user_id: int) -> Optional[UserState]:
-        """
-        Выполняет операцию `get` в бизнес-логике модуля.
-
-        Функция используется внутри приложения и поддерживает контракт между
-        компонентами.
+    def get(self, user_id: int) -> UserState | None:
+        """Возвращает текущее состояние пользователя.
 
         Args:
-            self: Ссылка на текущий экземпляр класса.
-            user_id: Идентификатор пользователя в Telegram.
+            user_id: Идентификатор пользователя Telegram.
 
         Returns:
-            Optional[UserState]: Результат выполнения функции.
+            UserState | None: Найденное состояние или `None`, если состояние
+            отсутствует.
         """
         return self._states.get(user_id)
 
     def set(self, user_id: int, state: UserState) -> None:
-        """
-        Выполняет операцию `set` в бизнес-логике модуля.
-
-        Функция используется внутри приложения и поддерживает контракт между
-        компонентами.
+        """Сохраняет состояние пользователя.
 
         Args:
-            self: Ссылка на текущий экземпляр класса.
-            user_id: Идентификатор пользователя в Telegram.
-            state: Параметр `state` для текущего шага обработки.
-
-        Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            user_id: Идентификатор пользователя Telegram.
+            state: Подготовленное состояние диалога.
         """
         self._states[user_id] = state
 
     def clear(self, user_id: int) -> None:
-        """
-        Выполняет операцию `clear` в бизнес-логике модуля.
-
-        Функция используется внутри приложения и поддерживает контракт между
-        компонентами.
+        """Удаляет состояние пользователя, если оно существует.
 
         Args:
-            self: Ссылка на текущий экземпляр класса.
-            user_id: Идентификатор пользователя в Telegram.
-
-        Returns:
-            Ноне: Возвращаемое значение отсутствует.
+            user_id: Идентификатор пользователя Telegram.
         """
         self._states.pop(user_id, None)

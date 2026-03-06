@@ -3,11 +3,12 @@ import re
 import threading
 import unicodedata
 from datetime import datetime
+from html import escape
 
 import telebot
 from telebot.apihelper import ApiTelegramException
 from telebot.types import (BotCommand, CallbackQuery, MenuButtonCommands,
-                           Message)
+                           Message, ForceReply)
 
 from bot.keyboards import (back_to_main, confirm_delete, edit_timetable_menu,
                            main_menu, manual_menu)
@@ -20,7 +21,9 @@ from config import (APP_TZ, DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE,
 from db.repositories import (add_feeling, add_medicine, add_stool,
                              delete_feeling, delete_meal, delete_medicine,
                              delete_stool, ensure_sleep_for_day,
-                             get_sleep_for_day, get_user_times,
+                             get_feeling_by_id, get_meal_by_id,
+                             get_medicine_by_id, get_sleep_for_day,
+                             get_stool_by_id, get_user_times,
                              get_water_for_day, increment_water,
                              list_feelings_for_day, list_meals_for_day,
                              list_medicines_for_day, list_stools_for_day,
@@ -550,6 +553,51 @@ def build_app(bot: telebot.TeleBot) -> None:
             return
         _reply_fresh(message, text, reply_markup=main_menu())
 
+    def _safe_placeholder(value: str, limit: int = 64) -> str:
+        """Возвращает безопасный placeholder для поля ввода Telegram.
+
+        Args:
+            value: Значение, которое нужно отобразить в поле ввода.
+            limit: Максимальная длина placeholder.
+
+        Returns:
+            str: Укороченное значение для `input_field_placeholder`.
+        """
+        clean_value = value.strip()
+        if len(clean_value) <= limit:
+            return clean_value
+        return clean_value[:limit - 3].rstrip() + '...'
+
+    def _prompt_edit_with_current_value(
+        message: Message,
+        prompt: str,
+        current_value: str,
+    ) -> int:
+        """Показывает текущую запись и просит ввести новое значение.
+
+        Args:
+            message: Входящее сообщение пользователя.
+            prompt: Базовый текст запроса на редактирование.
+            current_value: Текущее значение из базы данных.
+
+        Returns:
+            int: Идентификатор отправленного сообщения.
+        """
+        safe_value = current_value.strip()
+        if not safe_value:
+            return _reply_fresh(message, prompt)
+
+        message_text = (
+            f'{prompt}\n\n'
+            f'Текущее значение:\n'
+            f'<code>{escape(safe_value)}</code>'
+        )
+        force_reply = ForceReply(
+            selective=False,
+            input_field_placeholder=_safe_placeholder(safe_value),
+        )
+        return _reply_fresh(message, message_text, reply_markup=force_reply)
+
     def _stats_date_for_interaction(
         user_id: int,
         message_id: int | None = None,
@@ -881,6 +929,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_MEAL_PATTERN, message.text)
         meal_id = int(match.group(1))
+        meal = get_meal_by_id(message.from_user.id, meal_id)
+        if not meal:
+            _reply_fresh(message, '❌ Запись не найдена / нет прав.')
+            return
         date_iso = (
             _date_from_command_token(match.group(2))
             or _stats_date_for_interaction(message.from_user.id)
@@ -895,7 +947,19 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(message, 'Введите новое описание:')
+        meal_label_by_type = {
+            'breakfast': 'завтрака',
+            'lunch': 'обеда',
+            'dinner': 'ужина',
+            'snack': 'перекуса',
+        }
+        meal_type = str(meal.get('meal_type') or '')
+        meal_label = meal_label_by_type.get(meal_type, 'приема пищи')
+        _prompt_edit_with_current_value(
+            message,
+            f'Введите новое описание {meal_label}:',
+            str(meal['description']),
+        )
 
     @bot.message_handler(regexp=EDIT_MED_PATTERN)
     def edit_med_cmd(message: Message):
@@ -913,6 +977,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_MED_PATTERN, message.text)
         med_id = int(match.group(1))
+        medicine = get_medicine_by_id(message.from_user.id, med_id)
+        if not medicine:
+            _reply_fresh(message, '❌ Запись не найдена / нет прав.')
+            return
         date_iso = (
             _date_from_command_token(match.group(2))
             or _stats_date_for_interaction(message.from_user.id)
@@ -924,10 +992,15 @@ def build_app(bot: telebot.TeleBot) -> None:
             {
                 'id': med_id,
                 'date': date_iso,
+                'current_dosage': (medicine.get('dosage') or '').strip(),
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(message, 'Введите новое название:')
+        _prompt_edit_with_current_value(
+            message,
+            'Введите новое название:',
+            str(medicine['name']),
+        )
 
     @bot.message_handler(regexp=EDIT_STOOL_PATTERN)
     def edit_stool_cmd(message: Message):
@@ -945,6 +1018,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_STOOL_PATTERN, message.text)
         stool_id = int(match.group(1))
+        stool = get_stool_by_id(message.from_user.id, stool_id)
+        if not stool:
+            _reply_fresh(message, '❌ Запись не найдена / нет прав.')
+            return
         date_iso = (
             _date_from_command_token(match.group(2))
             or _stats_date_for_interaction(message.from_user.id)
@@ -959,7 +1036,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(message, _bristol_scale_prompt())
+        _prompt_edit_with_current_value(
+            message,
+            _bristol_scale_prompt(),
+            str(stool['quality']),
+        )
 
     @bot.message_handler(regexp=EDIT_FEELING_PATTERN)
     def edit_feeling_cmd(message: Message):
@@ -977,6 +1058,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_FEELING_PATTERN, message.text)
         feeling_id = int(match.group(1))
+        feeling = get_feeling_by_id(message.from_user.id, feeling_id)
+        if not feeling:
+            _reply_fresh(message, '❌ Запись не найдена / нет прав.')
+            return
         date_iso = (
             _date_from_command_token(match.group(2))
             or _stats_date_for_interaction(message.from_user.id)
@@ -991,7 +1076,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(message, 'Введите новое описание:')
+        _prompt_edit_with_current_value(
+            message,
+            'Введите новое описание самочувствия:',
+            str(feeling['description']),
+        )
 
     @bot.message_handler(regexp=EDIT_WATER_PATTERN)
     def edit_water_cmd(message: Message):
@@ -1009,6 +1098,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_WATER_PATTERN, message.text)
         date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        current_water = get_water_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
             'edit',
@@ -1018,12 +1108,13 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(
+        _prompt_edit_with_current_value(
             message,
             (
                 'Введите количество стаканов воды за '
                 f'{_display_date(date_iso)} (целое число, 0+):'
             ),
+            str(current_water),
         )
 
     @bot.message_handler(regexp=EDIT_SLEEP_WAKEUP_PATTERN)
@@ -1042,7 +1133,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_SLEEP_WAKEUP_PATTERN, message.text)
         date_iso = _date_from_command_token(match.group(1)) or _today_iso()
-        ensure_sleep_for_day(message.from_user.id, date_iso)
+        sleep = ensure_sleep_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
             'edit',
@@ -1052,12 +1143,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(
+        wakeup_time = str((sleep or {}).get('wakeup_time') or '--:--')
+        _prompt_edit_with_current_value(
             message,
             (
                 'Введите время подъема за '
                 f'{_display_date(date_iso)} в формате ЧЧ:ММ:'
             ),
+            wakeup_time,
         )
 
     @bot.message_handler(regexp=EDIT_SLEEP_BED_PATTERN)
@@ -1076,7 +1169,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_SLEEP_BED_PATTERN, message.text)
         date_iso = _date_from_command_token(match.group(1)) or _today_iso()
-        ensure_sleep_for_day(message.from_user.id, date_iso)
+        sleep = ensure_sleep_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
             'edit',
@@ -1086,12 +1179,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(
+        bed_time = str((sleep or {}).get('bed_time') or '--:--')
+        _prompt_edit_with_current_value(
             message,
             (
                 'Введите время отхода ко сну за '
                 f'{_display_date(date_iso)} в формате ЧЧ:ММ:'
             ),
+            bed_time,
         )
 
     @bot.message_handler(regexp=EDIT_SLEEP_QUALITY_PATTERN)
@@ -1110,7 +1205,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         match = re.match(EDIT_SLEEP_QUALITY_PATTERN, message.text)
         date_iso = _date_from_command_token(match.group(1)) or _today_iso()
-        ensure_sleep_for_day(message.from_user.id, date_iso)
+        sleep = ensure_sleep_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
             'edit',
@@ -1120,9 +1215,11 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
-        _reply_fresh(
+        quality = str((sleep or {}).get('quality_description') or '')
+        _prompt_edit_with_current_value(
             message,
             f'Введите описание качества сна за {_display_date(date_iso)}:',
+            quality,
         )
 
     @bot.message_handler(regexp=DELETE_COMMAND_PATTERN)
@@ -1593,9 +1690,13 @@ def build_app(bot: telebot.TeleBot) -> None:
                     name = validate_text(text)
                     state.step = 'med_dosage'
                     state.data['name'] = name
-                    _reply_fresh(
+                    current_dosage = str(
+                        state.data.get('current_dosage') or '-',
+                    )
+                    _prompt_edit_with_current_value(
                         message,
                         'Введите новую дозировку (или "-"):',
+                        current_dosage,
                     )
                     return
 

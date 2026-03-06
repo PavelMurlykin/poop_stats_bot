@@ -489,6 +489,30 @@ def list_meals_for_day(
 
 
 @with_db
+def get_meal_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    meal_id: int,
+) -> RowData | None:
+    """Возвращает запись приёма пищи пользователя по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        meal_id: Идентификатор записи приёма пищи.
+
+    Returns:
+        RowData | None: Словарь с полями записи или `None`.
+    """
+    cursor.execute(
+        'SELECT id, meal_type, description FROM meals '
+        'WHERE id=%s AND user_id=%s',
+        (meal_id, user_id),
+    )
+    return _fetch_dict(cursor)
+
+
+@with_db
 def update_meal(
     cursor: psycopg.Cursor,
     user_id: int,
@@ -585,6 +609,30 @@ def list_medicines_for_day(
 
 
 @with_db
+def get_medicine_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    med_id: int,
+) -> RowData | None:
+    """Возвращает запись лекарства пользователя по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        med_id: Идентификатор записи лекарства.
+
+    Returns:
+        RowData | None: Словарь с полями записи или `None`.
+    """
+    cursor.execute(
+        'SELECT id, name, dosage FROM medicines '
+        'WHERE id=%s AND user_id=%s',
+        (med_id, user_id),
+    )
+    return _fetch_dict(cursor)
+
+
+@with_db
 def update_medicine(
     cursor: psycopg.Cursor,
     user_id: int,
@@ -678,6 +726,29 @@ def list_stools_for_day(
         user_id,
         date_iso,
     )
+
+
+@with_db
+def get_stool_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    stool_id: int,
+) -> RowData | None:
+    """Возвращает запись туалета пользователя по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        stool_id: Идентификатор записи туалета.
+
+    Returns:
+        RowData | None: Словарь с полями записи или `None`.
+    """
+    cursor.execute(
+        'SELECT id, quality FROM stools WHERE id=%s AND user_id=%s',
+        (stool_id, user_id),
+    )
+    return _fetch_dict(cursor)
 
 
 @with_db
@@ -862,6 +933,30 @@ def list_feelings_for_day(
         user_id,
         date_iso,
     )
+
+
+@with_db
+def get_feeling_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    feeling_id: int,
+) -> RowData | None:
+    """Возвращает запись самочувствия пользователя по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        feeling_id: Идентификатор записи самочувствия.
+
+    Returns:
+        RowData | None: Словарь с полями записи или `None`.
+    """
+    cursor.execute(
+        'SELECT id, description FROM feelings '
+        'WHERE id=%s AND user_id=%s',
+        (feeling_id, user_id),
+    )
+    return _fetch_dict(cursor)
 
 
 @with_db

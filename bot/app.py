@@ -34,6 +34,12 @@ from services.report_service import BRISTOL, generate_user_report_xlsx
 log = logging.getLogger(__name__)
 
 OPTIONAL_DATE_COMMAND_PATTERN = r'(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$'
+EDIT_MEAL_PATTERN = rf'^/edit_meal_(\d+){OPTIONAL_DATE_COMMAND_PATTERN}'
+EDIT_MED_PATTERN = rf'^/edit_med_(\d+){OPTIONAL_DATE_COMMAND_PATTERN}'
+EDIT_STOOL_PATTERN = rf'^/edit_stool_(\d+){OPTIONAL_DATE_COMMAND_PATTERN}'
+EDIT_FEELING_PATTERN = (
+    rf'^/edit_feeling_(\d+){OPTIONAL_DATE_COMMAND_PATTERN}'
+)
 EDIT_WATER_PATTERN = rf'^/edit_water{OPTIONAL_DATE_COMMAND_PATTERN}'
 EDIT_SLEEP_WAKEUP_PATTERN = (
     rf'^/edit_sleep_wakeup{OPTIONAL_DATE_COMMAND_PATTERN}'
@@ -216,9 +222,11 @@ def _help_text() -> str:
         'туалет, самочувствие и сон.\n'
         '3. В <b>📋 Дневная статистика</b> смотрите записи за сегодня, '
         'редактируйте и удаляйте их.\n'
-        '4. <b>📥 Полная статистика</b> выгружает Excel-отчёт за весь период.\n'
+        '4. <b>📥 Полная статистика</b> выгружает '
+        'Excel-отчёт за весь период.\n'
         '5. <b>📊 Бристольская шкала</b> помогает выбрать оценку стула.\n\n'
-        '<b>Команды:</b> /menu — меню, /cancel — отменить текущий ввод.'
+        '<b>Команды:</b> /menu — меню, '
+        '/cancel — отменить текущий ввод.'
     )
 
 
@@ -490,18 +498,70 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         states.set(user_id, UserState(kind, step, data or {}))
 
-    def _status_text(is_successful: bool) -> str:
-        """Возвращает единый текст результата обновления записи.
+    def _state_date_iso(state: UserState) -> str:
+        """Возвращает дату события из состояния пользователя.
 
         Args:
-            is_successful: Признак успешной операции изменения данных.
+            state: Состояние диалога пользователя.
 
         Returns:
-            str: Текст ответа для пользователя.
+            str: Дата в формате хранения `YYYY-MM-DD`.
         """
-        if is_successful:
-            return '✅ Обновлено.'
-        return '❌ Не найдено / нет прав.'
+        date_iso = state.data.get('date')
+        if isinstance(date_iso, str):
+            return date_iso
+        return _today_iso()
+
+    def _event_name_for_state(state: UserState) -> str:
+        """Возвращает название события в предложном падеже.
+
+        Args:
+            state: Состояние диалога пользователя.
+
+        Returns:
+            str: Название события для информационного сообщения.
+        """
+        meal_names = {
+            'breakfast': 'завтраке',
+            'lunch': 'обеде',
+            'dinner': 'ужине',
+            'snack': 'перекусе',
+        }
+        if state.step in ('meal_desc', 'meal'):
+            meal_type = state.data.get('meal_type')
+            if isinstance(meal_type, str):
+                return meal_names.get(meal_type, 'приеме пищи')
+            return 'приеме пищи'
+
+        event_names = {
+            'med_dosage': 'приеме лекарства',
+            'stool_quality': 'качестве стула',
+            'stool': 'качестве стула',
+            'feeling_desc': 'самочувствии',
+            'sleep_wakeup_today': 'времени подъема',
+            'sleep_wakeup_time': 'времени подъема',
+            'sleep_bed_today': 'времени отхода ко сну',
+            'sleep_bed_time': 'времени отхода ко сну',
+            'sleep_quality_today': 'качестве сна',
+            'sleep_quality_desc': 'качестве сна',
+            'sleep_quality': 'качестве сна',
+            'water_count_today': 'воде',
+        }
+        return event_names.get(state.step, 'событии')
+
+    def _record_save_message(action: str, state: UserState) -> str:
+        """Формирует информационный текст об изменении записи.
+
+        Args:
+            action: Глагол действия (`Добавлена`, `Изменена`).
+            state: Состояние диалога пользователя.
+
+        Returns:
+            str: Готовый текст сообщения для пользователя.
+        """
+        date_display = _display_date(_state_date_iso(state))
+        event_name = _event_name_for_state(state)
+        return f'✅ {action} запись о {event_name} за {date_display}.'
 
     def _ask_meal_question(
         user_id: int,
@@ -709,7 +769,7 @@ def build_app(bot: telebot.TeleBot) -> None:
             reply_markup=back_to_main(),
         )
 
-    @bot.message_handler(regexp=r'^/edit_meal_(\d+)$')
+    @bot.message_handler(regexp=EDIT_MEAL_PATTERN)
     def edit_meal_cmd(message: Message):
         """
         Выполняет операцию `edit_meal_cmd` в бизнес-логике модуля.
@@ -723,19 +783,25 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             None: Возвращаемое значение отсутствует.
         """
-        meal_id = int(re.match(r'^/edit_meal_(\d+)$', message.text).group(1))
+        match = re.match(EDIT_MEAL_PATTERN, message.text)
+        meal_id = int(match.group(1))
+        date_iso = (
+            _date_from_command_token(match.group(2))
+            or _stats_date_for_interaction(message.from_user.id)
+        )
         _set_state(
             message.from_user.id,
             'edit',
             'meal_desc',
             {
                 'id': meal_id,
+                'date': date_iso,
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
         bot.reply_to(message, 'Введите новое описание:')
 
-    @bot.message_handler(regexp=r'^/edit_med_(\d+)$')
+    @bot.message_handler(regexp=EDIT_MED_PATTERN)
     def edit_med_cmd(message: Message):
         """
         Выполняет операцию `edit_med_cmd` в бизнес-логике модуля.
@@ -749,19 +815,25 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             None: Возвращаемое значение отсутствует.
         """
-        med_id = int(re.match(r'^/edit_med_(\d+)$', message.text).group(1))
+        match = re.match(EDIT_MED_PATTERN, message.text)
+        med_id = int(match.group(1))
+        date_iso = (
+            _date_from_command_token(match.group(2))
+            or _stats_date_for_interaction(message.from_user.id)
+        )
         _set_state(
             message.from_user.id,
             'edit',
             'med_name',
             {
                 'id': med_id,
+                'date': date_iso,
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
         bot.reply_to(message, 'Введите новое название:')
 
-    @bot.message_handler(regexp=r'^/edit_stool_(\d+)$')
+    @bot.message_handler(regexp=EDIT_STOOL_PATTERN)
     def edit_stool_cmd(message: Message):
         """
         Выполняет операцию `edit_stool_cmd` в бизнес-логике модуля.
@@ -775,19 +847,25 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             None: Возвращаемое значение отсутствует.
         """
-        stool_id = int(re.match(r'^/edit_stool_(\d+)$', message.text).group(1))
+        match = re.match(EDIT_STOOL_PATTERN, message.text)
+        stool_id = int(match.group(1))
+        date_iso = (
+            _date_from_command_token(match.group(2))
+            or _stats_date_for_interaction(message.from_user.id)
+        )
         _set_state(
             message.from_user.id,
             'edit',
             'stool_quality',
             {
                 'id': stool_id,
+                'date': date_iso,
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
         bot.reply_to(message, _bristol_scale_prompt())
 
-    @bot.message_handler(regexp=r'^/edit_feeling_(\d+)$')
+    @bot.message_handler(regexp=EDIT_FEELING_PATTERN)
     def edit_feeling_cmd(message: Message):
         """
         Выполняет операцию `edit_feeling_cmd` в бизнес-логике модуля.
@@ -801,14 +879,19 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             None: Возвращаемое значение отсутствует.
         """
-        feeling_id = int(
-            re.match(r'^/edit_feeling_(\d+)$', message.text).group(1))
+        match = re.match(EDIT_FEELING_PATTERN, message.text)
+        feeling_id = int(match.group(1))
+        date_iso = (
+            _date_from_command_token(match.group(2))
+            or _stats_date_for_interaction(message.from_user.id)
+        )
         _set_state(
             message.from_user.id,
             'edit',
             'feeling_desc',
             {
                 'id': feeling_id,
+                'date': date_iso,
                 'return_to_stats': _has_stats_context(message.from_user.id),
             },
         )
@@ -1348,7 +1431,9 @@ def build_app(bot: telebot.TeleBot) -> None:
         if data == 'export_all_stats':
             bot.answer_callback_query(call.id, text='Формирую отчёт…')
             bot.send_message(
-                user_id, '🔄 Формирую отчёт. Это может занять некоторое время.')
+                user_id,
+                '🔄 Формирую отчёт. Это может занять некоторое время.',
+            )
             thread = threading.Thread(
                 target=_export_and_send, args=(bot, user_id))
             thread.daemon = True
@@ -1387,9 +1472,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     desc = validate_text(text)
                     is_successful = update_meal(
                         user_id, state.data['id'], desc)
+                    status_text = (
+                        _record_save_message('Изменена', state)
+                        if is_successful
+                        else '❌ Не найдено / нет прав.'
+                    )
                     _reply_after_change(
                         message,
-                        _status_text(is_successful),
+                        status_text,
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1406,9 +1496,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     dosage = None if text == '-' else validate_text(text)
                     is_successful = update_medicine(
                         user_id, state.data['id'], state.data['name'], dosage)
+                    status_text = (
+                        _record_save_message('Изменена', state)
+                        if is_successful
+                        else '❌ Не найдено / нет прав.'
+                    )
                     _reply_after_change(
                         message,
-                        _status_text(is_successful),
+                        status_text,
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1418,9 +1513,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     quality = validate_stool_quality(text)
                     is_successful = update_stool(
                         user_id, state.data['id'], quality)
+                    status_text = (
+                        _record_save_message('Изменена', state)
+                        if is_successful
+                        else '❌ Не найдено / нет прав.'
+                    )
                     _reply_after_change(
                         message,
-                        _status_text(is_successful),
+                        status_text,
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1430,9 +1530,14 @@ def build_app(bot: telebot.TeleBot) -> None:
                     desc = validate_text(text)
                     is_successful = update_feeling(
                         user_id, state.data['id'], desc)
+                    status_text = (
+                        _record_save_message('Изменена', state)
+                        if is_successful
+                        else '❌ Не найдено / нет прав.'
+                    )
                     _reply_after_change(
                         message,
-                        _status_text(is_successful),
+                        status_text,
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1444,7 +1549,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     set_water_for_day(user_id, state.data['date'], water_count)
                     _reply_after_change(
                         message,
-                        '✅ Вода обновлена.',
+                        _record_save_message('Изменена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1458,7 +1563,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                         user_id, state.data['date'], wakeup_time=text)
                     _reply_after_change(
                         message,
-                        '✅ Подъем обновлен.',
+                        _record_save_message('Изменена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1472,7 +1577,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                         user_id, state.data['date'], bed_time=text)
                     _reply_after_change(
                         message,
-                        '✅ Время отхода ко сну обновлено.',
+                        _record_save_message('Изменена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1483,7 +1588,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     upsert_sleep_quality(user_id, state.data['date'], desc)
                     _reply_after_change(
                         message,
-                        '✅ Качество сна обновлено.',
+                        _record_save_message('Изменена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1533,7 +1638,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     )
                     _reply_after_change(
                         message,
-                        '✅ Запись сохранена.',
+                        _record_save_message('Добавлена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1562,7 +1667,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     )
                     _reply_after_change(
                         message,
-                        '✅ Лекарство добавлено.',
+                        _record_save_message('Добавлена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1573,7 +1678,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     add_stool(user_id, state.data['date'], quality)
                     _reply_after_change(
                         message,
-                        '✅ Запись сохранена.',
+                        _record_save_message('Добавлена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1584,7 +1689,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     add_feeling(user_id, state.data['date'], desc)
                     _reply_after_change(
                         message,
-                        '✅ Запись сохранена.',
+                        _record_save_message('Добавлена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1598,7 +1703,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                         user_id, state.data['date'], wakeup_time=text)
                     _reply_after_change(
                         message,
-                        '✅ Время подъема сохранено.',
+                        _record_save_message('Добавлена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1612,7 +1717,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                         user_id, state.data['date'], bed_time=text)
                     _reply_after_change(
                         message,
-                        '✅ Время отхода ко сну сохранено.',
+                        _record_save_message('Добавлена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1623,7 +1728,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                     upsert_sleep_quality(user_id, state.data['date'], desc)
                     _reply_after_change(
                         message,
-                        '✅ Качество сна сохранено.',
+                        _record_save_message('Добавлена', state),
                         bool(state.data.get('return_to_stats')),
                     )
                     states.clear(user_id)
@@ -1644,24 +1749,33 @@ def build_app(bot: telebot.TeleBot) -> None:
                         state.data['meal_type'],
                         desc,
                     )
-                    bot.reply_to(message, '✅ Сохранено.',
-                                 reply_markup=main_menu())
+                    bot.reply_to(
+                        message,
+                        _record_save_message('Добавлена', state),
+                        reply_markup=main_menu(),
+                    )
                     states.clear(user_id)
                     return
 
                 if state.step == 'stool':
                     quality = validate_stool_quality(text)
                     add_stool(user_id, state.data['date'], quality)
-                    bot.reply_to(message, '✅ Сохранено.',
-                                 reply_markup=main_menu())
+                    bot.reply_to(
+                        message,
+                        _record_save_message('Добавлена', state),
+                        reply_markup=main_menu(),
+                    )
                     states.clear(user_id)
                     return
 
                 if state.step == 'sleep_quality':
                     desc = validate_text(text)
                     upsert_sleep_quality(user_id, state.data['date'], desc)
-                    bot.reply_to(message, '✅ Сохранено.',
-                                 reply_markup=main_menu())
+                    bot.reply_to(
+                        message,
+                        _record_save_message('Добавлена', state),
+                        reply_markup=main_menu(),
+                    )
                     states.clear(user_id)
                     return
         except ValueError as error:
@@ -1735,7 +1849,7 @@ def _show_today(
                 meal_desc = meal['description']
                 lines.append(
                     f'<b>{meal_title}</b>: {meal_desc}'
-                    f'\n(ред.: /edit_meal_{meal_id})'
+                    f'\n(ред.: /edit_meal_{meal_id}{dated_command_suffix})'
                     f'\n(удал.: /delete_meal_{meal_id})\n'
                 )
 
@@ -1748,7 +1862,7 @@ def _show_today(
             tail = f' ({dosage})' if dosage else ''
             lines.append(
                 f'- {medicine_name}{tail}'
-                f'\n(ред.: /edit_med_{medicine_id})'
+                f'\n(ред.: /edit_med_{medicine_id}{dated_command_suffix})'
                 f'\n(удал.: /delete_med_{medicine_id})\n'
             )
 
@@ -1760,7 +1874,7 @@ def _show_today(
             quality_text = BRISTOL.get(quality, 'неизвестно')
             lines.append(
                 f'- {quality} - {quality_text}'
-                f'\n(ред.: /edit_stool_{stool_id})'
+                f'\n(ред.: /edit_stool_{stool_id}{dated_command_suffix})'
                 f'\n(удал.: /delete_stool_{stool_id})\n'
             )
 
@@ -1771,7 +1885,7 @@ def _show_today(
             feeling_desc = feeling['description']
             lines.append(
                 f'- {feeling_desc}'
-                f'\n(ред.: /edit_feeling_{feeling_id})'
+                f'\n(ред.: /edit_feeling_{feeling_id}{dated_command_suffix})'
                 f'\n(удал.: /delete_feeling_{feeling_id})\n'
             )
     lines.append('\n💧 <b>Вода:</b>')

@@ -1,52 +1,113 @@
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Tuple
+"""Репозиторный слой для чтения и записи данных пользователя."""
+
+from datetime import date, datetime, timezone
+from typing import Any, TypeAlias
+
+import psycopg
 
 from db.connection import with_db
 
+RowData: TypeAlias = dict[str, Any]
+RowsData: TypeAlias = list[RowData]
+UserTimes: TypeAlias = tuple[str, str, str, str, str, str]
+UserScheduleRow: TypeAlias = tuple[int, str, str, str, str, str, str]
+
+TIME_SLOT_COLUMNS: dict[str, str] = {
+    'breakfast': 'breakfast_time',
+    'lunch': 'lunch_time',
+    'dinner': 'dinner_time',
+    'toilet': 'toilet_time',
+    'wakeup': 'wakeup_time',
+    'bed': 'bed_time',
+}
+
 
 def _utc_now() -> datetime:
-    """
-    Выполняет операцию `_utc_now` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Возвращает текущее UTC-время без микросекунд для записей в БД.
 
     Returns:
-        datetime: Результат выполнения функции.
+        datetime: Текущее время UTC с обнулёнными микросекундами.
     """
-    return datetime.utcnow().replace(microsecond=0)
+    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
 def _parse_date(date_iso: str) -> date:
-    """
-    Выполняет операцию `_parse_date` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Преобразует строку формата `YYYY-MM-DD` в объект `date`.
 
     Args:
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        date_iso: Дата в формате хранения.
 
     Returns:
-        date: Результат выполнения функции.
+        date: Преобразованная дата.
     """
     return date.fromisoformat(date_iso)
 
 
-@with_db
-def register_user(cursor, user_id: int) -> None:
-    """
-    Выполняет операцию `register_user` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def _fetch_dict(cursor: psycopg.Cursor) -> RowData | None:
+    """Возвращает одну строку курсора в формате словаря.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
+        cursor: Курсор PostgreSQL с `dict_row`.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        RowData | None: Словарь с полями строки или `None`.
+    """
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def _list_rows_for_day(
+    cursor: psycopg.Cursor,
+    query: str,
+    user_id: int,
+    date_iso: str,
+) -> RowsData:
+    """Выполняет выборку строк за указанную дату пользователя.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        query: SQL-запрос с параметрами `(user_id, date)`.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата в формате хранения.
+
+    Returns:
+        RowsData: Список строк в виде словарей.
+    """
+    cursor.execute(query, (user_id, _parse_date(date_iso)))
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def _delete_by_id(
+    cursor: psycopg.Cursor,
+    table_name: str,
+    user_id: int,
+    entity_id: int,
+) -> bool:
+    """Удаляет запись пользователя по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        table_name: Имя таблицы.
+        user_id: Идентификатор пользователя.
+        entity_id: Идентификатор записи.
+
+    Returns:
+        bool: `True`, если запись удалена; иначе `False`.
+    """
+    cursor.execute(
+        f'DELETE FROM {table_name} WHERE id=%s AND user_id=%s',
+        (entity_id, user_id),
+    )
+    return cursor.rowcount > 0
+
+
+@with_db
+def register_user(cursor: psycopg.Cursor, user_id: int) -> None:
+    """Создаёт пользователя при первом обращении к боту.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя Telegram.
     """
     cursor.execute(
         'INSERT INTO users(user_id) VALUES (%s) '
@@ -57,22 +118,18 @@ def register_user(cursor, user_id: int) -> None:
 
 @with_db
 def get_user_times(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
-) -> Optional[Tuple[str, str, str, str, str, str]]:
-    """
-    Выполняет операцию `get_user_times` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+) -> UserTimes | None:
+    """Возвращает пользовательские времена напоминаний.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя Telegram.
 
     Returns:
-        Optional[Tuple[str, str, str, str, str, str]]: Результат выполнения
-        функции.
+        UserTimes | None: Кортеж времени уведомлений или `None`, если
+        пользователь не найден.
     """
     cursor.execute(
         'SELECT breakfast_time, lunch_time, dinner_time, toilet_time, '
@@ -94,58 +151,44 @@ def get_user_times(
 
 
 @with_db
-def update_user_time(cursor, user_id: int, slot: str, time_str: str) -> bool:
-    """
-    Выполняет операцию `update_user_time` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def update_user_time(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    slot: str,
+    time_str: str,
+) -> bool:
+    """Обновляет одно поле расписания пользователя.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        slot: Ключ слота расписания пользователя.
-        time_str: Время в формате `HH:MM`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя Telegram.
+        slot: Ключ временного слота (`breakfast`, `lunch`, ...).
+        time_str: Новое время в формате `HH:MM`.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если строка пользователя обновлена.
     """
-    col_map = {
-        'breakfast': 'breakfast_time',
-        'lunch': 'lunch_time',
-        'dinner': 'dinner_time',
-        'toilet': 'toilet_time',
-        'wakeup': 'wakeup_time',
-        'bed': 'bed_time',
-    }
-    column_name = col_map.get(slot)
+    column_name = TIME_SLOT_COLUMNS.get(slot)
     if not column_name:
         return False
-    now = _utc_now()
+
     cursor.execute(
-        (
-            f'UPDATE users SET {column_name} = %s, updated_at = %s '
-            'WHERE user_id = %s'
-        ),
-        (time_str, now, user_id),
+        f'UPDATE users SET {column_name}=%s, updated_at=%s '
+        'WHERE user_id=%s',
+        (time_str, _utc_now(), user_id),
     )
     return cursor.rowcount > 0
 
 
 @with_db
-def get_all_users(cursor) -> List[Tuple[int, str, str, str, str, str, str]]:
-    """
-    Выполняет операцию `get_all_users` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def get_all_users(cursor: psycopg.Cursor) -> list[UserScheduleRow]:
+    """Возвращает расписание всех пользователей для планировщика.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
+        cursor: Курсор PostgreSQL.
 
     Returns:
-        List[Tuple[int, str, str, str, str, str, str]]: Результат выполнения
-        функции.
+        list[UserScheduleRow]: Список кортежей с настройками расписания.
     """
     cursor.execute(
         'SELECT user_id, breakfast_time, lunch_time, dinner_time, '
@@ -168,179 +211,156 @@ def get_all_users(cursor) -> List[Tuple[int, str, str, str, str, str, str]]:
 
 @with_db
 def is_notification_sent(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     notification_type: str,
     date_iso: str,
 ) -> bool:
-    """
-    Выполняет операцию `is_notification_sent` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Проверяет, было ли отправлено уведомление за указанную дату.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        notification_type: Параметр `notification_type` для текущего шага
-                           обработки.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя Telegram.
+        notification_type: Тип уведомления.
+        date_iso: Дата в формате хранения.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если уведомление уже отправлено.
     """
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'SELECT 1 FROM notifications_log '
         'WHERE user_id=%s AND type=%s AND date=%s',
-        (user_id, notification_type, date_val),
+        (user_id, notification_type, _parse_date(date_iso)),
     )
     return cursor.fetchone() is not None
 
 
 @with_db
 def mark_notification_sent(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     notification_type: str,
     date_iso: str,
 ) -> None:
-    """
-    Выполняет операцию `mark_notification_sent` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Помечает уведомление как отправленное в журнале.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        notification_type: Параметр `notification_type` для текущего шага
-                           обработки.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-
-    Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя Telegram.
+        notification_type: Тип уведомления.
+        date_iso: Дата в формате хранения.
     """
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'INSERT INTO notifications_log(user_id, type, date) '
         'VALUES (%s, %s, %s) '
         'ON CONFLICT(user_id, type, date) DO NOTHING',
-        (user_id, notification_type, date_val),
+        (user_id, notification_type, _parse_date(date_iso)),
+    )
+
+
+def _ensure_sleep_row(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+) -> None:
+    """Создаёт запись сна за день, если она отсутствует.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата в формате хранения.
+    """
+    now = _utc_now()
+    cursor.execute(
+        'INSERT INTO sleeps('
+        'user_id, date, wakeup_time, bed_time, created_at, updated_at'
+        ') '
+        'SELECT user_id, %s, wakeup_time, bed_time, %s, %s '
+        'FROM users WHERE user_id=%s '
+        'ON CONFLICT(user_id, date) DO NOTHING',
+        (_parse_date(date_iso), now, now, user_id),
     )
 
 
 @with_db
 def ensure_sleep_for_day(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
-) -> Optional[Dict[str, Any]]:
-    """
-    Выполняет операцию `ensure_sleep_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+) -> RowData | None:
+    """Гарантирует существование записи сна и возвращает её.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата в формате хранения.
 
     Returns:
-        Optional[Dict[str, Any]]: Результат выполнения функции.
+        RowData | None: Словарь с данными сна за день или `None`.
     """
-    now = _utc_now()
-    date_val = _parse_date(date_iso)
-    cursor.execute(
-        'INSERT INTO sleeps('
-        'user_id, date, wakeup_time, bed_time, created_at, updated_at'
-        ') '
-        'SELECT user_id, %s, wakeup_time, bed_time, %s, %s '
-        'FROM users WHERE user_id=%s '
-        'ON CONFLICT(user_id, date) DO NOTHING',
-        (date_val, now, now, user_id),
-    )
+    date_value = _parse_date(date_iso)
+    _ensure_sleep_row(cursor, user_id, date_iso)
     cursor.execute(
         'SELECT id, wakeup_time, bed_time, quality_description '
         'FROM sleeps WHERE user_id=%s AND date=%s',
-        (user_id, date_val),
+        (user_id, date_value),
     )
-    row = cursor.fetchone()
-    return dict(row) if row else None
+    return _fetch_dict(cursor)
 
 
 @with_db
 def get_sleep_for_day(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
-) -> Optional[Dict[str, Any]]:
-    """
-    Выполняет операцию `get_sleep_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+) -> RowData | None:
+    """Возвращает запись сна пользователя за конкретный день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата в формате хранения.
 
     Returns:
-        Optional[Dict[str, Any]]: Результат выполнения функции.
+        RowData | None: Словарь с данными сна или `None`.
     """
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'SELECT id, wakeup_time, bed_time, quality_description '
         'FROM sleeps WHERE user_id=%s AND date=%s',
-        (user_id, date_val),
+        (user_id, _parse_date(date_iso)),
     )
-    row = cursor.fetchone()
-    return dict(row) if row else None
+    return _fetch_dict(cursor)
 
 
 @with_db
 def upsert_sleep_times(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
-    wakeup_time: Optional[str] = None,
-    bed_time: Optional[str] = None,
+    wakeup_time: str | None = None,
+    bed_time: str | None = None,
 ) -> bool:
-    """
-    Выполняет операцию `upsert_sleep_times` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Обновляет время подъёма и/или отхода ко сну за конкретный день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        wakeup_time: Параметр `wakeup_time` для текущего шага обработки.
-        bed_time: Параметр `bed_time` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата в формате хранения.
+        wakeup_time: Новое время подъёма или `None`.
+        bed_time: Новое время отхода ко сну или `None`.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если данные были обновлены.
     """
+    _ensure_sleep_row(cursor, user_id, date_iso)
+    date_value = _parse_date(date_iso)
     now = _utc_now()
-    date_val = _parse_date(date_iso)
-    cursor.execute(
-        'INSERT INTO sleeps('
-        'user_id, date, wakeup_time, bed_time, created_at, updated_at'
-        ') '
-        'SELECT user_id, %s, wakeup_time, bed_time, %s, %s '
-        'FROM users WHERE user_id=%s '
-        'ON CONFLICT(user_id, date) DO NOTHING',
-        (date_val, now, now, user_id),
-    )
 
     if wakeup_time is not None and bed_time is not None:
         cursor.execute(
             'UPDATE sleeps SET wakeup_time=%s, bed_time=%s, updated_at=%s '
             'WHERE user_id=%s AND date=%s',
-            (wakeup_time, bed_time, now, user_id, date_val),
+            (wakeup_time, bed_time, now, user_id, date_value),
         )
         return cursor.rowcount > 0
 
@@ -348,7 +368,7 @@ def upsert_sleep_times(
         cursor.execute(
             'UPDATE sleeps SET wakeup_time=%s, updated_at=%s '
             'WHERE user_id=%s AND date=%s',
-            (wakeup_time, now, user_id, date_val),
+            (wakeup_time, now, user_id, date_value),
         )
         return cursor.rowcount > 0
 
@@ -356,7 +376,7 @@ def upsert_sleep_times(
         cursor.execute(
             'UPDATE sleeps SET bed_time=%s, updated_at=%s '
             'WHERE user_id=%s AND date=%s',
-            (bed_time, now, user_id, date_val),
+            (bed_time, now, user_id, date_value),
         )
         return cursor.rowcount > 0
 
@@ -365,29 +385,23 @@ def upsert_sleep_times(
 
 @with_db
 def upsert_sleep_quality(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
     quality_description: str,
 ) -> bool:
-    """
-    Выполняет операцию `upsert_sleep_quality` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Создаёт или обновляет описание качества сна за день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        quality_description: Параметр `quality_description` для текущего шага
-                             обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата в формате хранения.
+        quality_description: Текстовое описание качества сна.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если запись создана или обновлена.
     """
     now = _utc_now()
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'INSERT INTO sleeps('
         'user_id, date, wakeup_time, bed_time, quality_description, '
@@ -396,44 +410,41 @@ def upsert_sleep_quality(
         'SELECT user_id, %s, wakeup_time, bed_time, %s, %s, %s '
         'FROM users WHERE user_id=%s '
         'ON CONFLICT(user_id, date) DO UPDATE SET '
-        'quality_description = EXCLUDED.quality_description, '
-        'updated_at = EXCLUDED.updated_at',
-        (date_val, quality_description, now, now, user_id),
+        'quality_description=EXCLUDED.quality_description, '
+        'updated_at=EXCLUDED.updated_at',
+        (_parse_date(date_iso), quality_description, now, now, user_id),
     )
     return cursor.rowcount > 0
 
 
 @with_db
 def upsert_meal(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
     meal_type: str,
     description: str,
 ) -> None:
-    """
-    Выполняет операцию `upsert_meal` в бизнес-логике модуля.
+    """Создаёт или обновляет приём пищи.
 
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    Для основных приёмов (`breakfast`, `lunch`, `dinner`) запись за день
+    обновляется, для `snack` всегда добавляется новая строка.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        meal_type: Параметр `meal_type` для текущего шага обработки.
-        description: Параметр `description` для текущего шага обработки.
-
-    Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата приёма пищи в формате хранения.
+        meal_type: Тип приёма пищи.
+        description: Описание приёма пищи.
     """
+    date_value = _parse_date(date_iso)
     now = _utc_now()
-    date_val = _parse_date(date_iso)
+
     if meal_type in ('breakfast', 'lunch', 'dinner'):
         cursor.execute(
             'SELECT id FROM meals '
             'WHERE user_id=%s AND date=%s AND meal_type=%s',
-            (user_id, date_val, meal_type),
+            (user_id, date_value, meal_type),
         )
         row = cursor.fetchone()
         if row:
@@ -443,385 +454,424 @@ def upsert_meal(
                 (description, now, row['id'], user_id),
             )
             return
+
     cursor.execute(
         'INSERT INTO meals('
         'user_id, date, meal_type, description, created_at, updated_at'
-        ') '
-        'VALUES (%s, %s, %s, %s, %s, %s)',
-        (user_id, date_val, meal_type, description, now, now),
+        ') VALUES (%s, %s, %s, %s, %s, %s)',
+        (user_id, date_value, meal_type, description, now, now),
     )
 
 
 @with_db
-def list_meals_for_day(cursor, user_id: int, date_iso: str):
-    """
-    Выполняет операцию `list_meals_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def list_meals_for_day(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+) -> RowsData:
+    """Возвращает список приёмов пищи за день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата выборки в формате хранения.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        RowsData: Список записей о приёмах пищи.
     """
-    date_val = _parse_date(date_iso)
-    cursor.execute(
+    return _list_rows_for_day(
+        cursor,
         'SELECT id, meal_type, description FROM meals '
         'WHERE user_id=%s AND date=%s ORDER BY created_at',
-        (user_id, date_val),
+        user_id,
+        date_iso,
     )
-    return cursor.fetchall()
 
 
 @with_db
-def update_meal(cursor, user_id: int, meal_id: int, description: str) -> bool:
-    """
-    Выполняет операцию `update_meal` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def get_meal_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    meal_id: int,
+) -> RowData | None:
+    """Возвращает запись приёма пищи пользователя по идентификатору.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        meal_id: Параметр `meal_id` для текущего шага обработки.
-        description: Параметр `description` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        meal_id: Идентификатор записи приёма пищи.
 
     Returns:
-        bool: Результат выполнения функции.
+        RowData | None: Словарь с полями записи или `None`.
     """
-    now = _utc_now()
+    cursor.execute(
+        'SELECT id, meal_type, description FROM meals '
+        'WHERE id=%s AND user_id=%s',
+        (meal_id, user_id),
+    )
+    return _fetch_dict(cursor)
+
+
+@with_db
+def update_meal(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    meal_id: int,
+    description: str,
+) -> bool:
+    """Обновляет описание приёма пищи по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        meal_id: Идентификатор записи приёма пищи.
+        description: Новое текстовое описание.
+
+    Returns:
+        bool: `True`, если запись обновлена.
+    """
     cursor.execute(
         'UPDATE meals SET description=%s, updated_at=%s '
         'WHERE id=%s AND user_id=%s',
-        (description, now, meal_id, user_id),
+        (description, _utc_now(), meal_id, user_id),
     )
     return cursor.rowcount > 0
 
 
 @with_db
-def delete_meal(cursor, user_id: int, meal_id: int) -> bool:
-    """
-    Выполняет операцию `delete_meal` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def delete_meal(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    meal_id: int,
+) -> bool:
+    """Удаляет запись о приёме пищи.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        meal_id: Параметр `meal_id` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        meal_id: Идентификатор записи.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если запись была удалена.
     """
-    cursor.execute('DELETE FROM meals WHERE id=%s AND user_id=%s',
-                   (meal_id, user_id))
-    return cursor.rowcount > 0
+    return _delete_by_id(cursor, 'meals', user_id, meal_id)
 
 
 @with_db
 def add_medicine(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
     name: str,
-    dosage: Optional[str],
+    dosage: str | None,
 ) -> None:
-    """
-    Выполняет операцию `add_medicine` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Добавляет запись о приёме лекарства.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        name: Параметр `name` для текущего шага обработки.
-        dosage: Параметр `dosage` для текущего шага обработки.
-
-    Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата приёма в формате хранения.
+        name: Название лекарства.
+        dosage: Дозировка, если указана пользователем.
     """
     now = _utc_now()
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'INSERT INTO medicines('
         'user_id, date, name, dosage, created_at, updated_at'
         ') VALUES (%s, %s, %s, %s, %s, %s)',
-        (user_id, date_val, name, dosage, now, now),
+        (user_id, _parse_date(date_iso), name, dosage, now, now),
     )
 
 
 @with_db
-def list_medicines_for_day(cursor, user_id: int, date_iso: str):
-    """
-    Выполняет операцию `list_medicines_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def list_medicines_for_day(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+) -> RowsData:
+    """Возвращает список лекарств за день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата выборки в формате хранения.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        RowsData: Список записей о лекарствах.
     """
-    date_val = _parse_date(date_iso)
-    cursor.execute(
+    return _list_rows_for_day(
+        cursor,
         'SELECT id, name, dosage FROM medicines '
         'WHERE user_id=%s AND date=%s ORDER BY created_at',
-        (user_id, date_val),
+        user_id,
+        date_iso,
     )
-    return cursor.fetchall()
+
+
+@with_db
+def get_medicine_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    med_id: int,
+) -> RowData | None:
+    """Возвращает запись лекарства пользователя по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        med_id: Идентификатор записи лекарства.
+
+    Returns:
+        RowData | None: Словарь с полями записи или `None`.
+    """
+    cursor.execute(
+        'SELECT id, name, dosage FROM medicines '
+        'WHERE id=%s AND user_id=%s',
+        (med_id, user_id),
+    )
+    return _fetch_dict(cursor)
 
 
 @with_db
 def update_medicine(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     med_id: int,
     name: str,
-    dosage: Optional[str],
+    dosage: str | None,
 ) -> bool:
-    """
-    Выполняет операцию `update_medicine` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Обновляет название и дозировку лекарства.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        med_id: Параметр `med_id` для текущего шага обработки.
-        name: Параметр `name` для текущего шага обработки.
-        dosage: Параметр `dosage` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        med_id: Идентификатор записи лекарства.
+        name: Новое название.
+        dosage: Новая дозировка.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если запись обновлена.
     """
-    now = _utc_now()
     cursor.execute(
         'UPDATE medicines SET name=%s, dosage=%s, updated_at=%s '
         'WHERE id=%s AND user_id=%s',
-        (name, dosage, now, med_id, user_id),
+        (name, dosage, _utc_now(), med_id, user_id),
     )
     return cursor.rowcount > 0
 
 
 @with_db
-def delete_medicine(cursor, user_id: int, med_id: int) -> bool:
-    """
-    Выполняет операцию `delete_medicine` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def delete_medicine(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    med_id: int,
+) -> bool:
+    """Удаляет запись о приёме лекарства.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        med_id: Параметр `med_id` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        med_id: Идентификатор записи.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если запись была удалена.
     """
-    cursor.execute('DELETE FROM medicines WHERE id=%s AND user_id=%s',
-                   (med_id, user_id))
-    return cursor.rowcount > 0
+    return _delete_by_id(cursor, 'medicines', user_id, med_id)
 
 
 @with_db
-def add_stool(cursor, user_id: int, date_iso: str, quality: int) -> None:
-    """
-    Выполняет операцию `add_stool` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def add_stool(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+    quality: int,
+) -> None:
+    """Добавляет оценку стула по Бристольской шкале.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        quality: Параметр `quality` для текущего шага обработки.
-
-    Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата записи в формате хранения.
+        quality: Оценка от 0 до 7.
     """
     now = _utc_now()
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'INSERT INTO stools('
         'user_id, date, quality, created_at, updated_at'
         ') VALUES (%s, %s, %s, %s, %s)',
-        (user_id, date_val, quality, now, now),
+        (user_id, _parse_date(date_iso), quality, now, now),
     )
 
 
 @with_db
-def list_stools_for_day(cursor, user_id: int, date_iso: str):
-    """
-    Выполняет операцию `list_stools_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def list_stools_for_day(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+) -> RowsData:
+    """Возвращает записи туалета за выбранный день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата выборки в формате хранения.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        RowsData: Список записей туалета.
     """
-    date_val = _parse_date(date_iso)
-    cursor.execute(
+    return _list_rows_for_day(
+        cursor,
         'SELECT id, quality FROM stools '
         'WHERE user_id=%s AND date=%s ORDER BY created_at',
-        (user_id, date_val),
+        user_id,
+        date_iso,
     )
-    return cursor.fetchall()
 
 
 @with_db
-def update_stool(cursor, user_id: int, stool_id: int, quality: int) -> bool:
-    """
-    Выполняет операцию `update_stool` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def get_stool_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    stool_id: int,
+) -> RowData | None:
+    """Возвращает запись туалета пользователя по идентификатору.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        stool_id: Параметр `stool_id` для текущего шага обработки.
-        quality: Параметр `quality` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        stool_id: Идентификатор записи туалета.
 
     Returns:
-        bool: Результат выполнения функции.
+        RowData | None: Словарь с полями записи или `None`.
     """
-    now = _utc_now()
+    cursor.execute(
+        'SELECT id, quality FROM stools WHERE id=%s AND user_id=%s',
+        (stool_id, user_id),
+    )
+    return _fetch_dict(cursor)
+
+
+@with_db
+def update_stool(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    stool_id: int,
+    quality: int,
+) -> bool:
+    """Обновляет оценку стула по идентификатору записи.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        stool_id: Идентификатор записи.
+        quality: Новая оценка от 0 до 7.
+
+    Returns:
+        bool: `True`, если запись обновлена.
+    """
     cursor.execute(
         'UPDATE stools SET quality=%s, updated_at=%s '
         'WHERE id=%s AND user_id=%s',
-        (quality, now, stool_id, user_id),
+        (quality, _utc_now(), stool_id, user_id),
     )
     return cursor.rowcount > 0
 
 
 @with_db
-def delete_stool(cursor, user_id: int, stool_id: int) -> bool:
-    """
-    Выполняет операцию `delete_stool` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def delete_stool(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    stool_id: int,
+) -> bool:
+    """Удаляет запись туалета по идентификатору.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        stool_id: Параметр `stool_id` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        stool_id: Идентификатор записи.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если запись была удалена.
     """
-    cursor.execute('DELETE FROM stools WHERE id=%s AND user_id=%s',
-                   (stool_id, user_id))
-    return cursor.rowcount > 0
+    return _delete_by_id(cursor, 'stools', user_id, stool_id)
 
 
 @with_db
-def add_feeling(cursor, user_id: int, date_iso: str, description: str) -> None:
-    """
-    Выполняет операцию `add_feeling` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def add_feeling(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+    description: str,
+) -> None:
+    """Добавляет запись о самочувствии пользователя.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        description: Параметр `description` для текущего шага обработки.
-
-    Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата записи в формате хранения.
+        description: Текст самочувствия.
     """
     now = _utc_now()
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'INSERT INTO feelings('
         'user_id, date, description, created_at, updated_at'
         ') VALUES (%s, %s, %s, %s, %s)',
-        (user_id, date_val, description, now, now),
+        (user_id, _parse_date(date_iso), description, now, now),
     )
 
 
 @with_db
 def increment_water(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
     glasses_count: int = 1,
 ) -> int:
-    """
-    Выполняет операцию `increment_water` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Увеличивает счётчик воды за день на заданное количество.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        glasses_count: Параметр `glasses_count` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата записи в формате хранения.
+        glasses_count: Количество добавляемых стаканов.
 
     Returns:
-        int: Результат выполнения функции.
+        int: Текущее количество стаканов воды за день.
     """
     now = _utc_now()
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'INSERT INTO water('
         'user_id, date, glasses_count, created_at, updated_at'
         ') VALUES (%s, %s, %s, %s, %s) '
         'ON CONFLICT(user_id, date) DO UPDATE SET '
-        'glasses_count = water.glasses_count + EXCLUDED.glasses_count, '
-        'updated_at = EXCLUDED.updated_at '
+        'glasses_count=water.glasses_count + EXCLUDED.glasses_count, '
+        'updated_at=EXCLUDED.updated_at '
         'RETURNING glasses_count',
-        (user_id, date_val, glasses_count, now, now),
+        (user_id, _parse_date(date_iso), glasses_count, now, now),
     )
     row = cursor.fetchone()
     return int(row['glasses_count']) if row else glasses_count
 
 
 @with_db
-def get_water_for_day(cursor, user_id: int, date_iso: str) -> int:
-    """
-    Выполняет операцию `get_water_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def get_water_for_day(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+) -> int:
+    """Возвращает количество выпитой воды за выбранный день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата выборки в формате хранения.
 
     Returns:
-        int: Результат выполнения функции.
+        int: Количество стаканов воды за день.
     """
-    date_val = _parse_date(date_iso)
     cursor.execute(
-        'SELECT glasses_count FROM water '
-        'WHERE user_id=%s AND date=%s',
-        (user_id, date_val),
+        'SELECT glasses_count FROM water WHERE user_id=%s AND date=%s',
+        (user_id, _parse_date(date_iso)),
     )
     row = cursor.fetchone()
     return int(row['glasses_count']) if row else 0
@@ -829,175 +879,181 @@ def get_water_for_day(cursor, user_id: int, date_iso: str) -> int:
 
 @with_db
 def set_water_for_day(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     date_iso: str,
     glasses_count: int,
 ) -> int:
-    """
-    Выполняет операцию `set_water_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Устанавливает точное количество воды за день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
-        glasses_count: Параметр `glasses_count` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата изменения в формате хранения.
+        glasses_count: Итоговое количество стаканов.
 
     Returns:
-        int: Результат выполнения функции.
+        int: Сохранённое количество стаканов воды.
     """
     now = _utc_now()
-    date_val = _parse_date(date_iso)
     cursor.execute(
         'INSERT INTO water('
         'user_id, date, glasses_count, created_at, updated_at'
         ') VALUES (%s, %s, %s, %s, %s) '
         'ON CONFLICT(user_id, date) DO UPDATE SET '
-        'glasses_count = EXCLUDED.glasses_count, '
-        'updated_at = EXCLUDED.updated_at '
+        'glasses_count=EXCLUDED.glasses_count, '
+        'updated_at=EXCLUDED.updated_at '
         'RETURNING glasses_count',
-        (user_id, date_val, glasses_count, now, now),
+        (user_id, _parse_date(date_iso), glasses_count, now, now),
     )
     row = cursor.fetchone()
     return int(row['glasses_count']) if row else glasses_count
 
 
 @with_db
-def list_feelings_for_day(cursor, user_id: int, date_iso: str):
-    """
-    Выполняет операцию `list_feelings_for_day` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def list_feelings_for_day(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    date_iso: str,
+) -> RowsData:
+    """Возвращает записи самочувствия за выбранный день.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        date_iso: Дата в формате `YYYY-MM-DD`.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        date_iso: Дата выборки в формате хранения.
 
     Returns:
-        Ноне: Возвращаемое значение отсутствует.
+        RowsData: Список записей самочувствия.
     """
-    date_val = _parse_date(date_iso)
-    cursor.execute(
+    return _list_rows_for_day(
+        cursor,
         'SELECT id, description FROM feelings '
         'WHERE user_id=%s AND date=%s ORDER BY created_at',
-        (user_id, date_val),
+        user_id,
+        date_iso,
     )
-    return cursor.fetchall()
+
+
+@with_db
+def get_feeling_by_id(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    feeling_id: int,
+) -> RowData | None:
+    """Возвращает запись самочувствия пользователя по идентификатору.
+
+    Args:
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        feeling_id: Идентификатор записи самочувствия.
+
+    Returns:
+        RowData | None: Словарь с полями записи или `None`.
+    """
+    cursor.execute(
+        'SELECT id, description FROM feelings '
+        'WHERE id=%s AND user_id=%s',
+        (feeling_id, user_id),
+    )
+    return _fetch_dict(cursor)
 
 
 @with_db
 def update_feeling(
-    cursor,
+    cursor: psycopg.Cursor,
     user_id: int,
     feeling_id: int,
     description: str,
 ) -> bool:
-    """
-    Выполняет операцию `update_feeling` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Обновляет описание самочувствия по идентификатору записи.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        feeling_id: Параметр `feeling_id` для текущего шага обработки.
-        description: Параметр `description` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        feeling_id: Идентификатор записи.
+        description: Новое описание самочувствия.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если запись обновлена.
     """
-    now = _utc_now()
     cursor.execute(
         'UPDATE feelings SET description=%s, updated_at=%s '
         'WHERE id=%s AND user_id=%s',
-        (description, now, feeling_id, user_id),
+        (description, _utc_now(), feeling_id, user_id),
     )
     return cursor.rowcount > 0
 
 
 @with_db
-def delete_feeling(cursor, user_id: int, feeling_id: int) -> bool:
-    """
-    Выполняет операцию `delete_feeling` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def delete_feeling(
+    cursor: psycopg.Cursor,
+    user_id: int,
+    feeling_id: int,
+) -> bool:
+    """Удаляет запись самочувствия.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
-        feeling_id: Параметр `feeling_id` для текущего шага обработки.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя.
+        feeling_id: Идентификатор записи.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если запись была удалена.
     """
-    cursor.execute('DELETE FROM feelings WHERE id=%s AND user_id=%s',
-                   (feeling_id, user_id))
-    return cursor.rowcount > 0
+    return _delete_by_id(cursor, 'feelings', user_id, feeling_id)
 
 
 @with_db
-def fetch_all_for_report(cursor, user_id: int) -> Dict[str, Any]:
-    """
-    Выполняет операцию `fetch_all_for_report` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+def fetch_all_for_report(
+    cursor: psycopg.Cursor,
+    user_id: int,
+) -> RowData:
+    """Возвращает все данные пользователя для формирования Excel-отчёта.
 
     Args:
-        cursor: Курсор PostgreSQL для выполнения SQL-запросов.
-        user_id: Идентификатор пользователя в Telegram.
+        cursor: Курсор PostgreSQL.
+        user_id: Идентификатор пользователя Telegram.
 
     Returns:
-        Dict[str, Any]: Результат выполнения функции.
+        RowData: Словарь с ключами `meals`, `medicines`, `stools`,
+        `feelings`, `water`, `sleeps`.
     """
-    cursor.execute(
-        'SELECT date, meal_type, description FROM meals '
-        'WHERE user_id=%s ORDER BY date, created_at',
-        (user_id,),
-    )
-    meals = [dict(row) for row in cursor.fetchall()]
-    cursor.execute(
-        'SELECT date, name, dosage FROM medicines '
-        'WHERE user_id=%s ORDER BY date, created_at',
-        (user_id,),
-    )
-    medicines = [dict(row) for row in cursor.fetchall()]
-    cursor.execute(
-        'SELECT date, quality FROM stools '
-        'WHERE user_id=%s ORDER BY date, created_at',
-        (user_id,),
-    )
-    stools = [dict(row) for row in cursor.fetchall()]
-    cursor.execute(
-        'SELECT date, description FROM feelings '
-        'WHERE user_id=%s ORDER BY date, created_at',
-        (user_id,),
-    )
-    feelings = [dict(row) for row in cursor.fetchall()]
-    cursor.execute(
-        'SELECT date, glasses_count FROM water '
-        'WHERE user_id=%s ORDER BY date',
-        (user_id,),
-    )
-    water = [dict(row) for row in cursor.fetchall()]
-    cursor.execute(
-        'SELECT date, wakeup_time, bed_time, quality_description FROM sleeps '
-        'WHERE user_id=%s ORDER BY date',
-        (user_id,),
-    )
-    sleeps = [dict(row) for row in cursor.fetchall()]
-    return {
-        'meals': meals,
-        'medicines': medicines,
-        'stools': stools,
-        'feelings': feelings,
-        'water': water,
-        'sleeps': sleeps,
+    datasets: dict[str, tuple[str, tuple[Any, ...]]] = {
+        'meals': (
+            'SELECT date, meal_type, description FROM meals '
+            'WHERE user_id=%s ORDER BY date, created_at',
+            (user_id,),
+        ),
+        'medicines': (
+            'SELECT date, name, dosage FROM medicines '
+            'WHERE user_id=%s ORDER BY date, created_at',
+            (user_id,),
+        ),
+        'stools': (
+            'SELECT date, quality FROM stools '
+            'WHERE user_id=%s ORDER BY date, created_at',
+            (user_id,),
+        ),
+        'feelings': (
+            'SELECT date, description FROM feelings '
+            'WHERE user_id=%s ORDER BY date, created_at',
+            (user_id,),
+        ),
+        'water': (
+            'SELECT date, glasses_count FROM water '
+            'WHERE user_id=%s ORDER BY date',
+            (user_id,),
+        ),
+        'sleeps': (
+            'SELECT date, wakeup_time, bed_time, quality_description '
+            'FROM sleeps WHERE user_id=%s ORDER BY date',
+            (user_id,),
+        ),
     }
+
+    report_data: RowData = {}
+    for dataset_name, (query, params) in datasets.items():
+        cursor.execute(query, params)
+        report_data[dataset_name] = [dict(row) for row in cursor.fetchall()]
+    return report_data

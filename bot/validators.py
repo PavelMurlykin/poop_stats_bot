@@ -1,42 +1,40 @@
+"""Набор валидаторов пользовательского ввода."""
+
 from datetime import datetime
 
 from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE, MAX_TEXT_LENGTH
 
 
 def validate_text(value: str) -> str:
-    """
-    Выполняет операцию `validate_text` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Проверяет и нормализует текстовое поле свободного ввода.
 
     Args:
-        value: Входное значение для проверки или обработки.
+        value: Сырой текст, полученный от пользователя.
 
     Returns:
-        str: Результат выполнения функции.
+        str: Обрезанный по краям и валидный текст.
+
+    Raises:
+        ValueError: Если текст пустой или длиннее разрешённого лимита.
     """
     normalized_text = (value or '').strip()
     if not normalized_text:
         raise ValueError('Пустой текст')
     if len(normalized_text) > MAX_TEXT_LENGTH:
         raise ValueError(
-            f'Слишком длинный текст (>{MAX_TEXT_LENGTH} символов)')
+            f'Слишком длинный текст (>{MAX_TEXT_LENGTH} символов)'
+        )
     return normalized_text
 
 
 def validate_time_hhmm(value: str) -> bool:
-    """
-    Выполняет операцию `validate_time_hhmm` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Проверяет, что значение является временем в формате `ЧЧ:ММ`.
 
     Args:
-        value: Входное значение для проверки или обработки.
+        value: Строка с предполагаемым временем.
 
     Returns:
-        bool: Результат выполнения функции.
+        bool: `True`, если время успешно распарсено, иначе `False`.
     """
     try:
         datetime.strptime(value, '%H:%M')
@@ -46,36 +44,37 @@ def validate_time_hhmm(value: str) -> bool:
 
 
 def validate_stool_quality(value: str) -> int:
-    """
-    Выполняет операцию `validate_stool_quality` в бизнес-логике модуля.
-
-    Функция используется внутри приложения и поддерживает контракт между
-    компонентами.
+    """Проверяет оценку по Бристольской шкале и возвращает число 0..7.
 
     Args:
-        value: Входное значение для проверки или обработки.
+        value: Строка, которую пользователь ввёл как оценку.
 
     Returns:
-        int: Результат выполнения функции.
+        int: Числовая оценка качества стула.
+
+    Raises:
+        ValueError: Если значение не является целым числом диапазона 0..7.
     """
     normalized_quality_text = (value or '').strip()
     if not normalized_quality_text.isdigit():
         raise ValueError('Введите число от 0 до 7.')
     quality_value = int(normalized_quality_text)
-    if not (0 <= quality_value <= 7):
+    if not 0 <= quality_value <= 7:
         raise ValueError('Введите число от 0 до 7.')
     return quality_value
 
 
 def validate_date_display(value: str) -> str:
-    """
-    Выполняет операцию `validate_date_display` в бизнес-логике модуля.
+    """Преобразует пользовательскую дату `ДД.ММ.ГГГГ` в формат БД.
 
     Args:
-        value: Дата в пользовательском формате `ДД.ММ.ГГГГ`.
+        value: Дата в пользовательском формате отображения.
 
     Returns:
         str: Дата в формате хранения `ГГГГ-ММ-ДД`.
+
+    Raises:
+        ValueError: Если дата не соответствует ожидаемому формату.
     """
     normalized_value = (value or '').strip()
     try:

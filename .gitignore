@@ -209,3 +209,4 @@ marimo/_lsp/
 __marimo__/
 .vscode/
 TODO
+python_base_prompt.md

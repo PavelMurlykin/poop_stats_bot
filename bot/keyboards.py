@@ -15,10 +15,10 @@ def main_menu() -> InlineKeyboardMarkup:
     keyboard_markup.add(
         InlineKeyboardButton('⏰ Расписание', callback_data='show_timetable'),
         InlineKeyboardButton('📊 Бристольская шкала', callback_data='bristol'),
-        InlineKeyboardButton('➕ Добавить событие',
-                             callback_data='manual_menu'),
-        InlineKeyboardButton('📋 Дневная статистика',
-                             callback_data='show_today'),
+        InlineKeyboardButton('➕ Добавить событие', callback_data='manual_menu'),
+        InlineKeyboardButton('📋 Дневная статистика', callback_data='show_today'),
+        InlineKeyboardButton('🗓 Статистика за дату',
+                             callback_data='show_stats_by_date'),
         InlineKeyboardButton('📥 Полная статистика',
                              callback_data='export_all_stats'),
         InlineKeyboardButton('❓ Помощь', callback_data='help'),
@@ -77,8 +77,7 @@ def manual_menu() -> InlineKeyboardMarkup:
     """
     keyboard_markup = InlineKeyboardMarkup(row_width=2)
     keyboard_markup.add(
-        InlineKeyboardButton(
-            '🍳 Завтрак', callback_data='manual_meal_breakfast'),
+        InlineKeyboardButton('🍳 Завтрак', callback_data='manual_meal_breakfast'),
         InlineKeyboardButton('🍲 Обед', callback_data='manual_meal_lunch'),
         InlineKeyboardButton('🍽️ Ужин', callback_data='manual_meal_dinner'),
         InlineKeyboardButton('🍪 Перекус', callback_data='manual_meal_snack'),
@@ -86,14 +85,18 @@ def manual_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton('💊 Лекарство', callback_data='manual_medicine'),
         InlineKeyboardButton('🚽 Туалет', callback_data='manual_stool'),
         InlineKeyboardButton('😊 Самочувствие', callback_data='manual_feeling'),
-        InlineKeyboardButton(
-            '🛌 Качество сна', callback_data='manual_sleep_quality'),
+        InlineKeyboardButton('🛌 Качество сна',
+                             callback_data='manual_sleep_quality'),
         InlineKeyboardButton('◀ Назад', callback_data='back_to_main'),
     )
     return keyboard_markup
 
 
-def confirm_delete(item_type: str, item_id: int) -> InlineKeyboardMarkup:
+def confirm_delete(
+    item_type: str,
+    item_id: int,
+    date_iso: str | None = None,
+) -> InlineKeyboardMarkup:
     """
     Выполняет операцию `confirm_delete` в бизнес-логике модуля.
 
@@ -103,15 +106,19 @@ def confirm_delete(item_type: str, item_id: int) -> InlineKeyboardMarkup:
     Args:
         item_type: Тип записи, над которой выполняется действие.
         item_id: Идентификатор записи в базе данных.
+        date_iso: Дата экрана статистики в формате хранения.
 
     Returns:
         InlineKeyboardMarkup: Результат выполнения функции.
     """
     keyboard_markup = InlineKeyboardMarkup(row_width=2)
+    callback_data = f'confirm_delete:{item_type}:{item_id}'
+    if date_iso:
+        callback_data += f':{date_iso}'
     keyboard_markup.add(
         InlineKeyboardButton(
             '✅ Да, удалить',
-            callback_data=f'confirm_delete:{item_type}:{item_id}',
+            callback_data=callback_data,
         ),
         InlineKeyboardButton('❌ Нет', callback_data='cancel_delete'),
     )

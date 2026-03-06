@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from config import MAX_TEXT_LENGTH
+from config import DATE_FORMAT_DISPLAY, DATE_FORMAT_STORAGE, MAX_TEXT_LENGTH
 
 
 def validate_text(value: str) -> str:
@@ -65,3 +65,25 @@ def validate_stool_quality(value: str) -> int:
     if not (0 <= quality_value <= 7):
         raise ValueError('Введите число от 0 до 7.')
     return quality_value
+
+
+def validate_date_display(value: str) -> str:
+    """
+    Выполняет операцию `validate_date_display` в бизнес-логике модуля.
+
+    Args:
+        value: Дата в пользовательском формате `ДД.ММ.ГГГГ`.
+
+    Returns:
+        str: Дата в формате хранения `ГГГГ-ММ-ДД`.
+    """
+    normalized_value = (value or '').strip()
+    try:
+        return datetime.strptime(
+            normalized_value,
+            DATE_FORMAT_DISPLAY,
+        ).strftime(DATE_FORMAT_STORAGE)
+    except ValueError as error:
+        raise ValueError(
+            'Введите дату в формате ДД.ММ.ГГГГ.'
+        ) from error

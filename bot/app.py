@@ -99,6 +99,25 @@ def _safe_delete_message(
         raise
 
 
+def _delete_messages_in_background(
+    bot: telebot.TeleBot,
+    chat_id: int,
+    message_ids: list[int],
+) -> None:
+    """Удаляет список сообщений в отдельном потоке без блокировки UI-ответа."""
+    unique_ids = list(dict.fromkeys(message_ids))
+    if not unique_ids:
+        return
+
+    def _delete_task() -> None:
+        for target_message_id in unique_ids:
+            _safe_delete_message(bot, chat_id, target_message_id)
+
+    delete_thread = threading.Thread(target=_delete_task)
+    delete_thread.daemon = True
+    delete_thread.start()
+
+
 def _today_iso() -> str:
     """
     Выполняет операцию `_today_iso` в бизнес-логике модуля.
@@ -390,21 +409,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         return ui_messages.get(user_id)
 
-    def _clear_ui_message(user_id: int) -> None:
-        """Очищает сохраненный идентификатор последнего сообщения бота.
-
-        Args:
-            user_id: Идентификатор пользователя Telegram.
-        """
-        ui_messages.pop(user_id, None)
-
     def _send_fresh_message(
         user_id: int,
         text: str,
         reply_markup=None,
         replace_message_id: int | None = None,
     ) -> int:
-        """Удаляет старое сообщение бота и отправляет новое.
+        """Отправляет новое сообщение и удаляет старое в фоне.
 
         Args:
             user_id: Идентификатор пользователя Telegram.
@@ -426,16 +437,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         ):
             message_ids_to_remove.append(tracked_message_id)
 
-        for target_message_id in message_ids_to_remove:
-            _safe_delete_message(bot, user_id, target_message_id)
-        _clear_ui_message(user_id)
-
         sent_message = bot.send_message(
             user_id,
             text,
             reply_markup=reply_markup,
         )
         _set_ui_message(user_id, sent_message.message_id)
+        _delete_messages_in_background(bot, user_id, message_ids_to_remove)
         return sent_message.message_id
 
     def _replace_message_fresh(
@@ -583,6 +591,10 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             int: Идентификатор отправленного сообщения.
         """
+        active_state = states.get(message.from_user.id)
+        if not active_state or active_state.kind != 'edit':
+            return _reply_fresh(message, prompt)
+
         safe_value = current_value.strip()
         if not safe_value:
             return _reply_fresh(message, prompt)
@@ -2149,12 +2161,12 @@ def _show_today(
 
     lines.append('Добавить новое событие:')
 
-    _safe_delete_message(bot, user_id, message_id)
     sent_message = bot.send_message(
         user_id,
         '\n'.join(lines),
         reply_markup=manual_menu(),
     )
+    _delete_messages_in_background(bot, user_id, [message_id])
     return sent_message.message_id
 
 

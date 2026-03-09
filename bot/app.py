@@ -8,7 +8,7 @@ from html import escape
 import telebot
 from telebot.apihelper import ApiTelegramException
 from telebot.types import (BotCommand, CallbackQuery, MenuButtonCommands,
-                           Message, ForceReply)
+                           Message, ForceReply, InlineKeyboardMarkup)
 
 from bot.keyboards import (back_to_main, confirm_delete, edit_timetable_menu,
                            main_menu, manual_menu)
@@ -116,6 +116,42 @@ def _delete_messages_in_background(
     delete_thread = threading.Thread(target=_delete_task)
     delete_thread.daemon = True
     delete_thread.start()
+
+
+def _is_inline_keyboard(reply_markup: object | None) -> bool:
+    """Проверяет, что разметка является inline-клавиатурой."""
+    return isinstance(reply_markup, InlineKeyboardMarkup)
+
+
+def _try_edit_message(
+    bot: telebot.TeleBot,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup=None,
+) -> bool:
+    """Пробует обновить существующее сообщение и возвращает результат."""
+    try:
+        bot.edit_message_text(
+            text=text,
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=reply_markup,
+        )
+        return True
+    except ApiTelegramException as error:
+        error_text = str(error).lower()
+        if 'message is not modified' in error_text:
+            return True
+        recoverable_errors = (
+            'message to edit not found',
+            'message can\'t be edited',
+            'message identifier is not specified',
+            'there is no text in the message to edit',
+        )
+        if any(pattern in error_text for pattern in recoverable_errors):
+            return False
+        raise
 
 
 def _today_iso() -> str:
@@ -388,6 +424,7 @@ def build_app(bot: telebot.TeleBot) -> None:
     states = StateStore()
     stats_context: dict[int, dict[str, int | str]] = {}
     ui_messages: dict[int, int] = {}
+    pending_cleanup_messages: dict[int, set[int]] = {}
 
     def _set_ui_message(user_id: int, message_id: int) -> None:
         """Запоминает последнее сообщение бота для пользователя.
@@ -409,6 +446,18 @@ def build_app(bot: telebot.TeleBot) -> None:
         """
         return ui_messages.get(user_id)
 
+    def _remember_pending_cleanup_message(
+        user_id: int,
+        message_id: int,
+    ) -> None:
+        """Добавляет сообщение в отложенную очистку для пользователя."""
+        message_ids = pending_cleanup_messages.setdefault(user_id, set())
+        message_ids.add(message_id)
+
+    def _consume_pending_cleanup_messages(user_id: int) -> list[int]:
+        """Возвращает и очищает список сообщений для отложенного удаления."""
+        return list(pending_cleanup_messages.pop(user_id, set()))
+
     def _send_fresh_message(
         user_id: int,
         text: str,
@@ -426,24 +475,74 @@ def build_app(bot: telebot.TeleBot) -> None:
         Returns:
             int: Идентификатор нового сообщения.
         """
-        message_ids_to_remove: list[int] = []
-        if replace_message_id is not None:
-            message_ids_to_remove.append(replace_message_id)
-
+        has_inline_keyboard = _is_inline_keyboard(reply_markup)
         tracked_message_id = _get_ui_message(user_id)
-        if (
-            tracked_message_id is not None
-            and tracked_message_id not in message_ids_to_remove
-        ):
-            message_ids_to_remove.append(tracked_message_id)
+
+        if has_inline_keyboard and tracked_message_id is not None:
+            is_updated = _try_edit_message(
+                bot,
+                user_id,
+                tracked_message_id,
+                text,
+                reply_markup=reply_markup,
+            )
+            if is_updated:
+                message_ids_to_remove = _consume_pending_cleanup_messages(
+                    user_id)
+                message_ids_to_remove = [
+                    target_message_id
+                    for target_message_id in message_ids_to_remove
+                    if target_message_id != tracked_message_id
+                ]
+                if (
+                    replace_message_id is not None
+                    and replace_message_id != tracked_message_id
+                ):
+                    message_ids_to_remove.append(replace_message_id)
+                _delete_messages_in_background(
+                    bot,
+                    user_id,
+                    message_ids_to_remove,
+                )
+                _set_ui_message(user_id, tracked_message_id)
+                return tracked_message_id
 
         sent_message = bot.send_message(
             user_id,
             text,
             reply_markup=reply_markup,
         )
-        _set_ui_message(user_id, sent_message.message_id)
-        _delete_messages_in_background(bot, user_id, message_ids_to_remove)
+        if has_inline_keyboard:
+            message_ids_to_remove = _consume_pending_cleanup_messages(user_id)
+            message_ids_to_remove = [
+                target_message_id
+                for target_message_id in message_ids_to_remove
+                if target_message_id != sent_message.message_id
+            ]
+            if (
+                replace_message_id is not None
+                and replace_message_id != sent_message.message_id
+            ):
+                message_ids_to_remove.append(replace_message_id)
+            if (
+                tracked_message_id is not None
+                and tracked_message_id != sent_message.message_id
+            ):
+                message_ids_to_remove.append(tracked_message_id)
+            _set_ui_message(user_id, sent_message.message_id)
+            _delete_messages_in_background(
+                bot,
+                user_id,
+                message_ids_to_remove,
+            )
+        else:
+            _remember_pending_cleanup_message(user_id, sent_message.message_id)
+            if (
+                replace_message_id is not None
+                and replace_message_id != sent_message.message_id
+                and replace_message_id != tracked_message_id
+            ):
+                _remember_pending_cleanup_message(user_id, replace_message_id)
         return sent_message.message_id
 
     def _replace_message_fresh(
@@ -520,12 +619,14 @@ def build_app(bot: telebot.TeleBot) -> None:
         status_text: str | None = None,
     ) -> None:
         normalized_date = date_iso or _today_iso()
+        cleanup_message_ids = _consume_pending_cleanup_messages(user_id)
         new_message_id = _show_today(
             bot,
             user_id,
             message_id,
             normalized_date,
             status_text=status_text,
+            cleanup_message_ids=cleanup_message_ids,
         )
         _set_stats_context(user_id, new_message_id, normalized_date)
         _set_ui_message(user_id, new_message_id)
@@ -538,12 +639,14 @@ def build_app(bot: telebot.TeleBot) -> None:
         if not context:
             return False
         date_iso = str(context['date'])
+        cleanup_message_ids = _consume_pending_cleanup_messages(user_id)
         new_message_id = _show_today(
             bot,
             user_id,
             int(context['message_id']),
             date_iso,
             status_text=status_text,
+            cleanup_message_ids=cleanup_message_ids,
         )
         _set_stats_context(user_id, new_message_id, date_iso)
         _set_ui_message(user_id, new_message_id)
@@ -2021,6 +2124,7 @@ def _show_today(
     message_id: int,
     date_iso: str | None = None,
     status_text: str | None = None,
+    cleanup_message_ids: list[int] | None = None,
 ) -> int:
     """
     Выполняет операцию `_show_today` в бизнес-логике модуля.
@@ -2161,12 +2265,31 @@ def _show_today(
 
     lines.append('Добавить новое событие:')
 
+    message_text = '\n'.join(lines)
+    message_ids_to_remove = list(cleanup_message_ids or [])
+
+    if _try_edit_message(
+        bot,
+        user_id,
+        message_id,
+        message_text,
+        reply_markup=manual_menu(),
+    ):
+        message_ids_to_remove = [
+            target_message_id
+            for target_message_id in message_ids_to_remove
+            if target_message_id != message_id
+        ]
+        _delete_messages_in_background(bot, user_id, message_ids_to_remove)
+        return message_id
+
     sent_message = bot.send_message(
         user_id,
-        '\n'.join(lines),
+        message_text,
         reply_markup=manual_menu(),
     )
-    _delete_messages_in_background(bot, user_id, [message_id])
+    message_ids_to_remove.append(message_id)
+    _delete_messages_in_background(bot, user_id, message_ids_to_remove)
     return sent_message.message_id
 
 

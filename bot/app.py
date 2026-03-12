@@ -36,7 +36,7 @@ from services.report_service import BRISTOL, generate_user_report_xlsx
 
 log = logging.getLogger(__name__)
 
-OPTIONAL_DATE_COMMAND_PATTERN = r'(?:_((?:\d{8})|(?:\d{4}-\d{2}-\d{2})))?$'
+OPTIONAL_DATE_COMMAND_PATTERN = r'(?:_(\d{8}))?$'
 EDIT_MEAL_PATTERN = rf'^/edit_meal_(\d+){OPTIONAL_DATE_COMMAND_PATTERN}'
 EDIT_MED_PATTERN = rf'^/edit_med_(\d+){OPTIONAL_DATE_COMMAND_PATTERN}'
 EDIT_STOOL_PATTERN = rf'^/edit_stool_(\d+){OPTIONAL_DATE_COMMAND_PATTERN}'
@@ -218,11 +218,16 @@ def _date_from_command_token(token: str | None) -> str | None:
     Returns:
         str | None: Дата в формате хранения или `None`.
     """
-    if not token:
+    if token is None:
         return None
-    if re.fullmatch(r'\d{8}', token):
+    if not re.fullmatch(r'\d{8}', token):
+        raise ValueError('Неверный токен даты. Используйте формат YYYYMMDD.')
+    try:
         return datetime.strptime(token, '%Y%m%d').strftime(DATE_FORMAT_STORAGE)
-    return token
+    except ValueError as error:
+        raise ValueError(
+            'Неверная дата в токене. Используйте существующую дату в формате YYYYMMDD.',
+        ) from error
 
 
 def _help_text() -> str:
@@ -463,6 +468,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         text: str,
         reply_markup=None,
         replace_message_id: int | None = None,
+        force_new: bool = False,
     ) -> int:
         """Отправляет новое сообщение и удаляет старое в фоне.
 
@@ -478,7 +484,7 @@ def build_app(bot: telebot.TeleBot) -> None:
         has_inline_keyboard = _is_inline_keyboard(reply_markup)
         tracked_message_id = _get_ui_message(user_id)
 
-        if has_inline_keyboard and tracked_message_id is not None:
+        if (not force_new) and has_inline_keyboard and tracked_message_id is not None:
             is_updated = _try_edit_message(
                 bot,
                 user_id,
@@ -724,6 +730,19 @@ def build_app(bot: telebot.TeleBot) -> None:
             return _today_iso()
         return str(context['date'])
 
+    def _resolve_command_date(
+        message: Message,
+        token: str | None,
+        fallback_date: str,
+    ) -> str | None:
+        """Разбирает токен даты из команды и при ошибке отвечает пользователю."""
+        try:
+            parsed_date = _date_from_command_token(token)
+        except ValueError as error:
+            _reply_fresh(message, f'❌ {error}')
+            return None
+        return parsed_date or fallback_date
+
     def _has_stats_context(user_id: int) -> bool:
         """Проверяет, есть ли активный контекст экрана статистики.
 
@@ -963,6 +982,7 @@ def build_app(bot: telebot.TeleBot) -> None:
                 'и добавления событий.'
             ),
             reply_markup=main_menu(),
+            force_new=True,
         )
 
     @bot.message_handler(commands=['menu'])
@@ -1048,10 +1068,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         if not meal:
             _reply_fresh(message, '❌ Запись не найдена / нет прав.')
             return
-        date_iso = (
-            _date_from_command_token(match.group(2))
-            or _stats_date_for_interaction(message.from_user.id)
+        date_iso = _resolve_command_date(
+            message,
+            match.group(2),
+            _stats_date_for_interaction(message.from_user.id),
         )
+        if date_iso is None:
+            return
         _set_state(
             message.from_user.id,
             'edit',
@@ -1096,10 +1119,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         if not medicine:
             _reply_fresh(message, '❌ Запись не найдена / нет прав.')
             return
-        date_iso = (
-            _date_from_command_token(match.group(2))
-            or _stats_date_for_interaction(message.from_user.id)
+        date_iso = _resolve_command_date(
+            message,
+            match.group(2),
+            _stats_date_for_interaction(message.from_user.id),
         )
+        if date_iso is None:
+            return
         _set_state(
             message.from_user.id,
             'edit',
@@ -1137,10 +1163,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         if not stool:
             _reply_fresh(message, '❌ Запись не найдена / нет прав.')
             return
-        date_iso = (
-            _date_from_command_token(match.group(2))
-            or _stats_date_for_interaction(message.from_user.id)
+        date_iso = _resolve_command_date(
+            message,
+            match.group(2),
+            _stats_date_for_interaction(message.from_user.id),
         )
+        if date_iso is None:
+            return
         _set_state(
             message.from_user.id,
             'edit',
@@ -1177,10 +1206,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         if not feeling:
             _reply_fresh(message, '❌ Запись не найдена / нет прав.')
             return
-        date_iso = (
-            _date_from_command_token(match.group(2))
-            or _stats_date_for_interaction(message.from_user.id)
+        date_iso = _resolve_command_date(
+            message,
+            match.group(2),
+            _stats_date_for_interaction(message.from_user.id),
         )
+        if date_iso is None:
+            return
         _set_state(
             message.from_user.id,
             'edit',
@@ -1212,7 +1244,13 @@ def build_app(bot: telebot.TeleBot) -> None:
             None: Возвращаемое значение отсутствует.
         """
         match = re.match(EDIT_WATER_PATTERN, message.text)
-        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        date_iso = _resolve_command_date(
+            message,
+            match.group(1),
+            _today_iso(),
+        )
+        if date_iso is None:
+            return
         current_water = get_water_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
@@ -1247,7 +1285,13 @@ def build_app(bot: telebot.TeleBot) -> None:
             None: Возвращаемое значение отсутствует.
         """
         match = re.match(EDIT_SLEEP_WAKEUP_PATTERN, message.text)
-        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        date_iso = _resolve_command_date(
+            message,
+            match.group(1),
+            _today_iso(),
+        )
+        if date_iso is None:
+            return
         sleep = ensure_sleep_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
@@ -1283,7 +1327,13 @@ def build_app(bot: telebot.TeleBot) -> None:
             None: Возвращаемое значение отсутствует.
         """
         match = re.match(EDIT_SLEEP_BED_PATTERN, message.text)
-        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        date_iso = _resolve_command_date(
+            message,
+            match.group(1),
+            _today_iso(),
+        )
+        if date_iso is None:
+            return
         sleep = ensure_sleep_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
@@ -1319,7 +1369,13 @@ def build_app(bot: telebot.TeleBot) -> None:
             None: Возвращаемое значение отсутствует.
         """
         match = re.match(EDIT_SLEEP_QUALITY_PATTERN, message.text)
-        date_iso = _date_from_command_token(match.group(1)) or _today_iso()
+        date_iso = _resolve_command_date(
+            message,
+            match.group(1),
+            _today_iso(),
+        )
+        if date_iso is None:
+            return
         sleep = ensure_sleep_for_day(message.from_user.id, date_iso)
         _set_state(
             message.from_user.id,
@@ -1354,10 +1410,13 @@ def build_app(bot: telebot.TeleBot) -> None:
         match = re.match(DELETE_COMMAND_PATTERN, message.text)
         item_type = match.group(1)
         item_id = int(match.group(2))
-        date_iso = (
-            _date_from_command_token(match.group(3))
-            or _stats_date_for_interaction(message.from_user.id)
+        date_iso = _resolve_command_date(
+            message,
+            match.group(3),
+            _stats_date_for_interaction(message.from_user.id),
         )
+        if date_iso is None:
+            return
         _send_fresh_message(
             message.from_user.id,
             '❓ Вы уверены, что хотите удалить эту запись?',
